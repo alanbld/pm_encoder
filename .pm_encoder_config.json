@@ -1,0 +1,32 @@
+{
+  "ignore_patterns": [
+    ".git",
+    ".idea",
+    ".vscode",
+    "target",
+    "build",
+    "dist",
+    ".venv",
+    "__pycache__",
+    "*.pyc",
+    "*.log",
+    "*.swp",
+    "*.bak",
+    "*.tmp",
+    "node_modules",
+    "recordings.db*",
+    "compare_output"
+  ],
+  "include_patterns": [
+    "*.rs",
+    "*.toml",
+    "*.md",
+    "*.py",
+    "*.sh",
+    "*.json",
+    "*.xml",
+    "*.txt",
+    "Dockerfile",
+    "LICENSE"
+  ]
+}
