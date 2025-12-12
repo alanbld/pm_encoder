@@ -369,6 +369,214 @@ Different languages are analyzed differently:
 
 The smart mode automatically adapts to each language!
 
+## Context Lenses (v1.2.0)
+
+### What Are Context Lenses?
+
+Context Lenses are pre-configured profiles that combine filters, sorting, and truncation strategies for specific use cases. Instead of manually setting multiple flags, you use one lens name.
+
+### Example 8: Architecture Overview
+
+Get a high-level view of your codebase structure:
+
+```bash
+# Shows only signatures - perfect for understanding APIs
+./pm_encoder.py . --lens architecture | pbcopy
+```
+
+This automatically:
+- Excludes tests, docs, and assets
+- Uses structure mode (signatures only)
+- Sorts by name for organized browsing
+- Focuses on code structure, not implementation
+
+**Perfect for:**
+- Understanding a new codebase
+- Sharing project structure with LLMs
+- API documentation
+- Code reviews focused on interfaces
+
+### Example 9: Debug Session
+
+Quickly grab recent changes for debugging:
+
+```bash
+# Shows full files, sorted by most recently modified
+./pm_encoder.py . --lens debug -o recent.txt
+```
+
+This automatically:
+- Shows full file content (no truncation)
+- Sorts by modification time (newest first)
+- Excludes only build artifacts
+- Focuses on what changed recently
+
+**Perfect for:**
+- Bug investigation
+- "What did I just break?"
+- Recent feature development
+- Code archaeology
+
+### Example 10: Security Review
+
+Focus on security-critical code:
+
+```bash
+# Smart truncation focused on security patterns
+./pm_encoder.py . --lens security -o security_audit.txt
+```
+
+This automatically:
+- Includes authentication, authorization, crypto code
+- Excludes tests and documentation
+- Smart truncation at 300 lines
+- Preserves security-relevant patterns
+
+**Perfect for:**
+- Security audits
+- Vulnerability scanning
+- Compliance reviews
+- Penetration testing prep
+
+### Example 11: Team Onboarding
+
+Create balanced overview for new developers:
+
+```bash
+# Moderate truncation with documentation
+./pm_encoder.py . --lens onboarding -o welcome.txt
+```
+
+This automatically:
+- Includes README, docs, and main code
+- Smart truncation at 400 lines
+- Preserves entry points and examples
+- Balances breadth and depth
+
+**Perfect for:**
+- New team member onboarding
+- Project handoffs
+- Documentation generation
+- High-level explanations
+
+### Workflow 6: Custom Lens for Your Project
+
+Create project-specific lenses in `.pm_encoder_config.json`:
+
+```json
+{
+  "ignore_patterns": [".git", "node_modules"],
+  "lenses": {
+    "backend": {
+      "description": "Backend API and database code",
+      "include": ["api/**/*.py", "models/**/*.py", "db/**/*.sql"],
+      "exclude": ["tests/**", "migrations/**"],
+      "truncate_mode": "structure",
+      "sort_by": "name"
+    },
+    "frontend": {
+      "description": "React components and styles",
+      "include": ["src/components/**", "src/pages/**", "src/styles/**"],
+      "exclude": ["*.test.tsx", "*.stories.tsx"],
+      "truncate_mode": "smart",
+      "truncate": 300,
+      "sort_by": "name"
+    }
+  }
+}
+```
+
+Then use them:
+```bash
+# Backend context for API work
+./pm_encoder.py . --lens backend -o backend.txt
+
+# Frontend context for UI work
+./pm_encoder.py . --lens frontend -o frontend.txt
+```
+
+### Understanding Lens Output
+
+Every lens adds a `.pm_encoder_meta` file to explain the filtering:
+
+```
+++++++++++ .pm_encoder_meta ++++++++++
+Context generated with lens: "architecture"
+Focus: High-level structure, interfaces, configuration
+
+Implementation details truncated using structure mode
+Output shows only:
+  - Import/export statements
+  - Class and function signatures
+  - Type definitions and interfaces
+  - Module-level documentation
+
+Generated: 2025-12-12T22:38:43.850133
+pm_encoder version: 1.2.0
+---------- .pm_encoder_meta ... ----------
+```
+
+This transparency helps LLMs (and humans) understand what they're seeing.
+
+### Combining Lenses with CLI Flags
+
+Lenses can be overridden with CLI flags:
+
+```bash
+# Use architecture lens, but override to smart mode instead of structure
+./pm_encoder.py . --lens architecture --truncate-mode smart
+
+# Use security lens, but also include tests
+./pm_encoder.py . --lens security --include "tests/**"
+
+# Use debug lens, but exclude a noisy file
+./pm_encoder.py . --lens debug --exclude "logs/verbose.log"
+```
+
+**Precedence order:**
+1. CLI flags (highest priority)
+2. Lens settings
+3. Config file
+4. Defaults (lowest priority)
+
+### Tips for Using Lenses
+
+**1. Start with built-in lenses**
+```bash
+# Try each one to see what fits
+./pm_encoder.py . --lens architecture | head -100
+./pm_encoder.py . --lens debug | head -100
+./pm_encoder.py . --lens security | head -100
+```
+
+**2. Create project-specific lenses**
+```bash
+# Add to .pm_encoder_config.json for your team
+{
+  "lenses": {
+    "pr-review": {
+      "description": "Code for pull request reviews",
+      "truncate_mode": "smart",
+      "truncate": 500,
+      "sort_by": "mtime",
+      "sort_order": "desc"
+    }
+  }
+}
+```
+
+**3. Use structure mode for large codebases**
+```bash
+# Get overview without overwhelming LLMs
+./pm_encoder.py . --lens architecture --truncate 100
+```
+
+**4. Combine with other tools**
+```bash
+# Architecture view of just changed files
+git diff --name-only | xargs ./pm_encoder.py --lens architecture
+```
+
 ## Next Steps
 
 - Experiment with different include/exclude patterns for your project type

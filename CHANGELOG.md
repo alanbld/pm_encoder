@@ -5,6 +5,61 @@ All notable changes to pm_encoder will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.2.0] - 2025-12-12
+
+### Added - Context Lenses System
+- **Context Lenses**: Pre-configured serialization profiles for specific use cases
+- **Built-in lenses** (4 total):
+  - `architecture`: High-level structure with structure mode (signatures only)
+  - `debug`: Recent changes with full files, sorted by mtime DESC
+  - `security`: Security-critical code with smart truncation (300 lines)
+  - `onboarding`: Balanced overview for new developers (400 lines)
+- **LensManager class**: Handles lens application with layered precedence
+- **Lens manifest printing**: Transparent stderr output showing active lens configuration
+- **Meta-aware output**: Injects `.pm_encoder_meta` file to document lens and filtering for LLMs
+- **Custom lens support**: Define project-specific lenses in `.pm_encoder_config.json`
+
+### Added - Structure Mode Truncation
+- **Structure mode**: New truncation mode showing only signatures (imports, class/function declarations)
+- **Language-specific structure extraction** for:
+  - Python: Imports, class definitions, function signatures, decorators
+  - JavaScript/TypeScript: Imports/exports, classes, functions, arrow functions, interfaces
+  - Shell: Shebang, function declarations, source statements
+- **Graceful fallback**: Unsupported languages automatically fall back to smart mode
+- **Structure mode markers**: Clear indicators showing what was included/excluded
+
+### Added - CLI Options
+- `--lens NAME`: Apply a context lens (architecture|debug|security|onboarding|custom)
+- `--truncate-mode structure`: New truncation mode option (in addition to simple|smart)
+
+### Changed
+- **load_config()**: Now returns custom lenses from config file (3rd return value)
+- **serialize()**: Accepts optional `lens_manager` parameter for lens integration
+- **Layered precedence**: CLI flags > Lens settings > Config file > Defaults
+- **Version bumped** to 1.2.0
+
+### Performance
+- **Optimized analyzers**: All analyzers now use `analyze_lines()` to eliminate redundant string splitting
+- **~50% reduction** in string allocation overhead from v1.1.0
+
+### Documentation
+- **README.md**: Added comprehensive Context Lenses section with examples
+- **TUTORIAL.md**: Added 4 new lens examples (Examples 8-11) and Workflow 6
+- **CHANGELOG.md**: This entry
+
+### Use Cases Unlocked
+- **Architecture exploration**: Get codebase overview without implementation details (80%+ reduction)
+- **Rapid debugging**: Immediately focus on recently modified files
+- **Security audits**: Automated filtering for security-relevant code
+- **Team onboarding**: Pre-configured balanced context for new developers
+- **Custom workflows**: Define project-specific lenses for common tasks
+
+### Technical Details
+- Zero new external dependencies (still 100% standard library)
+- Python 3.6+ compatibility maintained
+- Backward compatible: existing v1.1.0 workflows unchanged
+- Lens system purely additive (no breaking changes)
+
 ## [1.1.0] - 2025-12-12
 
 ### Added - Intelligent Truncation System

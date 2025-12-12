@@ -254,6 +254,142 @@ cp examples/plugins/rust_analyzer.py ~/.pm_encoder/plugins/
 
 ---
 
+## Context Lenses (v1.2.0)
+
+Context Lenses provide pre-configured serialization profiles optimized for specific use cases. Each lens configures filters, sorting, and truncation strategies to produce focused, relevant context.
+
+### Built-in Lenses
+
+| Lens | Description | Truncation | Sort | Best For |
+|------|-------------|------------|------|----------|
+| **architecture** | High-level structure, interfaces, configuration | Structure mode | Name (ASC) | Understanding codebase organization, API surface |
+| **debug** | Recent changes for debugging | None (full files) | Mtime (DESC) | Bug investigation, recent modifications |
+| **security** | Security-sensitive code for review | Smart (300 lines) | Name (ASC) | Security audits, vulnerability scanning |
+| **onboarding** | New developer introduction | Smart (400 lines) | Name (ASC) | Team onboarding, documentation |
+
+### Using Context Lenses
+
+```bash
+# Architecture view - signatures only
+./pm_encoder.py . --lens architecture -o architecture.txt
+
+# Debug view - recent changes with full content
+./pm_encoder.py . --lens debug -o recent_changes.txt
+
+# Security review - focused on security-critical code
+./pm_encoder.py . --lens security -o security_review.txt
+
+# Onboarding - balanced overview for new developers
+./pm_encoder.py . --lens onboarding -o onboarding.txt
+```
+
+### Lens Transparency
+
+When using a lens, pm_encoder injects a `.pm_encoder_meta` file at the start of output:
+
+```
+++++++++++ .pm_encoder_meta ++++++++++
+Context generated with lens: "architecture"
+Focus: High-level structure, interfaces, configuration
+
+Implementation details truncated using structure mode
+Output shows only:
+  - Import/export statements
+  - Class and function signatures
+  - Type definitions and interfaces
+  - Module-level documentation
+
+Generated: 2025-12-12T22:38:43.850133
+pm_encoder version: 1.2.0
+---------- .pm_encoder_meta ... ----------
+```
+
+This ensures LLMs understand how the context was filtered.
+
+### Structure Mode Truncation
+
+Structure mode (used by `architecture` lens) shows only signatures:
+
+**Original file (100 lines):**
+```python
+import os
+from pathlib import Path
+
+class FileProcessor:
+    def __init__(self, root_dir):
+        self.root = root_dir
+        self.cache = {}
+
+    def process_file(self, file_path):
+        # 50 lines of implementation
+        ...
+        return result
+```
+
+**Structure mode output (~10 lines):**
+```python
+import os
+from pathlib import Path
+
+class FileProcessor:
+    def __init__(self, root_dir):
+    def process_file(self, file_path):
+
+======================================================================
+STRUCTURE MODE: Showing only signatures
+Included: imports, class/function signatures, type definitions
+Excluded: function bodies, implementation details
+======================================================================
+```
+
+### Custom Lenses
+
+Define custom lenses in `.pm_encoder_config.json`:
+
+```json
+{
+  "lenses": {
+    "frontend": {
+      "description": "Frontend components and styles",
+      "include": ["src/components/**/*.tsx", "src/styles/**/*.css"],
+      "exclude": ["*.test.tsx"],
+      "truncate_mode": "smart",
+      "truncate": 400,
+      "sort_by": "name"
+    },
+    "api": {
+      "description": "Backend API endpoints",
+      "include": ["api/**/*.py", "models/**/*.py"],
+      "exclude": ["tests/**"],
+      "truncate_mode": "structure",
+      "sort_by": "name"
+    }
+  }
+}
+```
+
+Then use them:
+```bash
+./pm_encoder.py . --lens frontend -o frontend_context.txt
+./pm_encoder.py . --lens api -o api_structure.txt
+```
+
+### Lens Precedence
+
+Configuration is merged with layered precedence (highest to lowest):
+1. **CLI flags** (e.g., `--include`, `--exclude`)
+2. **Lens settings** (from `--lens`)
+3. **Config file** (`.pm_encoder_config.json`)
+4. **Defaults** (built-in patterns)
+
+Example:
+```bash
+# Lens sets structure mode, but CLI overrides to smart
+./pm_encoder.py . --lens architecture --truncate-mode smart
+```
+
+---
+
 ## Configuration
 
 You can control the default behavior of the script by placing a `.pm_encoder_config.json` file in your project's root directory.

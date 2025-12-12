@@ -28,5 +28,32 @@
     "*.txt",
     "Dockerfile",
     "LICENSE"
-  ]
+  ],
+  "lenses": {
+    "docs": {
+      "description": "Documentation and guides for pm_encoder",
+      "include": [
+        "*.md",
+        "CHANGELOG.md",
+        "LICENSE",
+        "examples/**"
+      ],
+      "exclude": [
+        "LLM/**"
+      ],
+      "truncate_mode": "smart",
+      "truncate": 500,
+      "sort_by": "name",
+      "sort_order": "asc"
+    },
+    "core": {
+      "description": "Core implementation (pm_encoder.py only)",
+      "include": [
+        "pm_encoder.py"
+      ],
+      "exclude": [],
+      "truncate_mode": "structure",
+      "sort_by": "name"
+    }
+  }
 }

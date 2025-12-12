@@ -5,7 +5,7 @@ using the Plus/Minus format, with robust directory pruning,
 filtering, and sorting capabilities.
 """
 
-__version__ = "1.1.0"
+__version__ = "1.2.0"
 __author__ = "pm_encoder contributors"
 __license__ = "MIT"
 
@@ -62,6 +62,13 @@ class LanguageAnalyzer:
             "category": "unknown",
             "critical_sections": []  # List of (start_line, end_line) tuples
         }
+
+    def get_structure_ranges(self, lines: List[str]) -> List[Tuple[int, int]]:
+        """
+        Return line ranges for structure-only view (signatures only).
+        Default implementation returns empty (no structure mode support).
+        """
+        return []
 
     def get_truncate_ranges(self, content: str, max_lines: int) -> Tuple[List[Tuple[int, int]], Dict[str, Any]]:
         """
@@ -158,6 +165,79 @@ class PythonAnalyzer(LanguageAnalyzer):
             "critical_sections": [(ep[1], ep[1] + 20) for ep in entry_points]
         }
 
+    def get_structure_ranges(self, lines: List[str]) -> List[Tuple[int, int]]:
+        """Return line ranges for structure-only view (signatures only)."""
+        keep_ranges = []
+        in_function = False
+        in_class = False
+        function_start = 0
+        indent_level = 0
+
+        for i, line in enumerate(lines, 1):
+            stripped = line.lstrip()
+
+            # Skip blank lines and comments (but keep docstrings)
+            if not stripped or (stripped.startswith('#') and not stripped.startswith('"""') and not stripped.startswith("'''")):
+                continue
+
+            # Calculate current indent
+            current_indent = len(line) - len(stripped)
+
+            # Imports
+            if stripped.startswith(('import ', 'from ')):
+                keep_ranges.append((i, i))
+                continue
+
+            # Class definitions
+            if stripped.startswith('class '):
+                keep_ranges.append((i, i))
+                in_class = True
+                indent_level = current_indent
+                continue
+
+            # Function/method definitions (signatures only)
+            if stripped.startswith('def ') or stripped.startswith('async def '):
+                keep_ranges.append((i, i))
+                in_function = True
+                function_start = i
+                indent_level = current_indent
+                continue
+
+            # Decorators
+            if stripped.startswith('@'):
+                keep_ranges.append((i, i))
+                continue
+
+            # Module-level docstrings (first non-import statement)
+            if i <= 10 and (stripped.startswith('"""') or stripped.startswith("'''")):
+                keep_ranges.append((i, i))
+                continue
+
+            # Reset tracking when we exit a function/class (dedent)
+            if (in_function or in_class) and stripped and current_indent <= indent_level:
+                in_function = False
+                in_class = False
+
+        # Merge consecutive ranges
+        return self._merge_consecutive_ranges(keep_ranges)
+
+    def _merge_consecutive_ranges(self, ranges: List[Tuple[int, int]]) -> List[Tuple[int, int]]:
+        """Merge consecutive or overlapping line ranges."""
+        if not ranges:
+            return []
+
+        sorted_ranges = sorted(ranges)
+        merged = [sorted_ranges[0]]
+
+        for current in sorted_ranges[1:]:
+            last = merged[-1]
+            if current[0] <= last[1] + 1:  # Consecutive or overlapping
+                merged[-1] = (last[0], max(last[1], current[1]))
+            else:
+                merged.append(current)
+
+        return merged
+
     def get_truncate_ranges(self, content: str, max_lines: int) -> Tuple[List[Tuple[int, int]], Dict[str, Any]]:
         lines = content.split('\n')
         total_lines = len(lines)
@@ -245,6 +325,60 @@ class JavaScriptAnalyzer(LanguageAnalyzer):
             "critical_sections": []
         }
 
+    def get_structure_ranges(self, lines: List[str]) -> List[Tuple[int, int]]:
+        """Return line ranges for structure-only view (signatures only)."""
+        keep_ranges = []
+
+        for i, line in enumerate(lines, 1):
+            stripped = line.strip()
+
+            if not stripped or stripped.startswith('//'):
+                continue
+
+            # Import/export statements
+            if stripped.startswith(('import ', 'export ', 'from ')):
+                keep_ranges.append((i, i))
+                continue
+
+            # Class declarations
+            if 'class ' in stripped and (stripped.startswith('class ') or stripped.startswith('export class ')):
+                keep_ranges.append((i, i))
+                continue
+
+            # Function declarations (traditional)
+            if 'function ' in stripped and (stripped.startswith('function ') or stripped.startswith('export function ') or stripped.startswith('async function ')):
+                keep_ranges.append((i, i))
+                continue
+
+            # Arrow functions (const foo = () => ...)
+            if stripped.startswith('const ') and '=>' in stripped:
+                keep_ranges.append((i, i))
+                continue
+
+            # Interface/type definitions (TypeScript)
+            if stripped.startswith(('interface ', 'type ', 'enum ', 'export interface ', 'export type ', 'export enum ')):
+                keep_ranges.append((i, i))
+                continue
+
+        return self._merge_consecutive_ranges(keep_ranges)
+
+    def _merge_consecutive_ranges(self, ranges: List[Tuple[int, int]]) -> List[Tuple[int, int]]:
+        """Merge consecutive or overlapping line ranges."""
+        if not ranges:
+            return []
+
+        sorted_ranges = sorted(ranges)
+        merged = [sorted_ranges[0]]
+
+        for current in sorted_ranges[1:]:
+            last = merged[-1]
+            if current[0] <= last[1] + 1:
+                merged[-1] = (last[0], max(last[1], current[1]))
+            else:
+                merged.append(current)
+
+        return merged
+
     def get_truncate_ranges(self, content: str, max_lines: int) -> Tuple[List[Tuple[int, int]], Dict[str, Any]]:
         lines = content.split('\n')
         total_lines = len(lines)
@@ -303,6 +437,31 @@ class ShellAnalyzer(LanguageAnalyzer):
             "category": "script",
             "critical_sections": []
         }
+
+    def get_structure_ranges(self, lines: List[str]) -> List[Tuple[int, int]]:
+        """Return line ranges for structure-only view (signatures only)."""
+        keep_ranges = []
+
+        func_pattern = re.compile(r'^\s*(?:function\s+)?(\w+)\s*\(\s*\)\s*\{?')
+        source_pattern = re.compile(r'^\s*(?:\.|source)\s+(.+)')
+
+        for i, line in enumerate(lines, 1):
+            # Shebang
+            if i == 1 and line.startswith('#!'):
+                keep_ranges.append((i, i))
+                continue
+
+            # Function declarations
+            if func_pattern.match(line):
+                keep_ranges.append((i, i))
+                continue
+
+            # Source/dot statements
+            if source_pattern.match(line):
+                keep_ranges.append((i, i))
+                continue
+
+        return keep_ranges  # Shell scripts are typically simple, no need to merge
 
 
 class MarkdownAnalyzer(LanguageAnalyzer):
@@ -618,10 +777,44 @@ def truncate_content(
     lines = content.split('\n')
     total_lines = len(lines)
 
-    if total_lines <= max_lines:
-        return content, False, {}
-
     analyzer = analyzer_registry.get_analyzer(file_path)
+
+    if mode == 'structure':
+        # Structure mode: keep only signatures and structural elements
+        structure_ranges = analyzer.get_structure_ranges(lines)
+
+        if not structure_ranges:
+            # Fall back to smart mode for languages without structure support
+            mode = 'smart'
+        else:
+            # Extract lines from structure ranges
+            kept_lines = []
+            for start, end in structure_ranges:
+                kept_lines.extend(lines[start-1:end])
+
+            truncated = '\n'.join(kept_lines)
+            analysis = analyzer.analyze_lines(lines, file_path)
+
+            # Add structure mode marker
+            if include_summary:
+                marker_lines = [
+                    "",
+                    "=" * 70,
+                    f"STRUCTURE MODE: Showing only signatures ({len(kept_lines)}/{total_lines} lines)",
+                    f"Language: {analysis.get('language', 'Unknown')}",
+                    "",
+                    "Included: imports, class/function signatures, type definitions",
+                    "Excluded: function bodies, implementation details",
+                    "",
+                    f"To get full content: --include \"{file_path.as_posix()}\" --truncate 0",
+                    "=" * 70
+                ]
+                truncated += '\n' + '\n'.join(marker_lines)
+
+            return truncated, True, analysis
+
+    if total_lines <= max_lines and mode != 'structure':
+        return content, False, {}
 
     if mode == 'simple':
         # Simple mode: just keep first N lines
@@ -696,11 +889,166 @@ def truncate_content(
         return truncated, True, analysis
 
 
-def load_config(config_path: Optional[Path]) -> Tuple[List[str], List[str]]:
-    """Loads ignore and include patterns from a JSON config file."""
+# ============================================================================
+# CONTEXT LENS SYSTEM
+# ============================================================================
+
+class LensManager:
+    """Manages context lenses for focused project serialization."""
+
+    # Built-in lenses
+    BUILT_IN_LENSES = {
+        "architecture": {
+            "description": "High-level structure, interfaces, configuration",
+            "truncate_mode": "structure",
+            "exclude": ["tests/**", "test/**", "docs/**", "doc/**", "assets/**", "*.log", "__pycache__"],
+            "include": ["*.py", "*.js", "*.ts", "*.jsx", "*.tsx", "*.json", "*.toml", "*.yaml", "*.yml", "Dockerfile", "*.md"],
+            "sort_by": "name",
+            "sort_order": "asc"
+        },
+        "debug": {
+            "description": "Recent changes for debugging",
+            "truncate": 0,
+            "sort_by": "mtime",
+            "sort_order": "desc",
+            "exclude": ["*.pyc", "__pycache__", ".git"]
+        },
+        "security": {
+            "description": "Security-relevant files (auth, secrets, dependencies)",
+            "truncate": 0,
+            "include": ["**/*auth*", "**/*security*", "**/*secret*", "**/*password*", "**/*credential*",
+                       "package.json", "package-lock.json", "requirements.txt", "Pipfile", "Pipfile.lock",
+                       "Gemfile", "Gemfile.lock", "Dockerfile", "*.env.example", ".gitignore"],
+            "exclude": ["tests/**", "test/**", "docs/**", "*.log"],
+            "sort_by": "name"
+        },
+        "onboarding": {
+            "description": "Essential files for new contributors",
+            "truncate": 0,
+            "include": ["README.md", "CONTRIBUTING.md", "LICENSE", "CHANGELOG.md",
+                       "**/main.py", "**/index.js", "**/app.py", "**/server.js",
+                       "package.json", "setup.py", "pyproject.toml", "Cargo.toml",
+                       "Makefile", "Dockerfile", ".pm_encoder_config.json"],
+            "sort_by": "name"
+        }
+    }
+
+    def __init__(self, config_lenses: Dict = None):
+        """Initialize with optional user-defined lenses from config."""
+        self.config_lenses = config_lenses or {}
+        self.active_lens = None
+        self.active_lens_config = None
+
+    def apply_lens(self, lens_name: str, base_config: Dict) -> Dict:
+        """
+        Apply a lens to base configuration using layered precedence:
+        1. CLI Explicit Flags (handled in main)
+        2. Lens Configuration
+        3. Config File (base_config)
+        4. Hardcoded Defaults
+        """
+        # Get lens definition
+        lens_def = self.config_lenses.get(lens_name) or self.BUILT_IN_LENSES.get(lens_name)
+
+        if not lens_def:
+            available = list(self.BUILT_IN_LENSES.keys()) + list(self.config_lenses.keys())
+            raise ValueError(f"Unknown lens '{lens_name}'. Available: {', '.join(available)}")
+
+        self.active_lens = lens_name
+        self.active_lens_config = lens_def.copy()
+
+        # Merge lens config over base config
+        merged = base_config.copy()
+        for key, value in lens_def.items():
+            if key != "description":
+                merged[key] = value
+
+        return merged
+
+    def print_manifest(self):
+        """Print lens manifest to stderr for transparency."""
+        if not self.active_lens or not self.active_lens_config:
+            return
+
+        lens_def = self.active_lens_config
+        description = lens_def.get("description", "Custom lens")
+
+        print(f"\n[LENS: {self.active_lens}]", file=sys.stderr)
+        print(f"├── Description: {description}", file=sys.stderr)
+
+        # Truncation info
+        if "truncate_mode" in lens_def:
+            mode = lens_def["truncate_mode"]
+            print(f"├── Truncation: {mode} mode (signatures only)" if mode == "structure" else f"├── Truncation: {mode} mode", file=sys.stderr)
+        elif "truncate" in lens_def:
+            lines = lens_def["truncate"]
+            if lines == 0:
+                print(f"├── Truncation: Disabled (full files)", file=sys.stderr)
+            else:
+                print(f"├── Truncation: {lines} lines per file", file=sys.stderr)
+
+        # Sorting
+        sort_by = lens_def.get("sort_by", "name")
+        sort_order = lens_def.get("sort_order", "asc")
+        print(f"├── Sorting: {sort_by.capitalize()} ({sort_order.upper()})", file=sys.stderr)
+
+        # Exclusions
+        if "exclude" in lens_def:
+            excludes = lens_def["exclude"][:5]
+            if len(lens_def["exclude"]) > 5:
+                excludes.append(f"... (+{len(lens_def['exclude']) - 5} more)")
+            print(f"├── Excluding: {', '.join(excludes)}", file=sys.stderr)
+
+        # Inclusions
+        if "include" in lens_def:
+            includes = lens_def["include"][:5]
+            if len(lens_def["include"]) > 5:
+                includes.append(f"... (+{len(lens_def['include']) - 5} more)")
+            print(f"└── Including: {', '.join(includes)}", file=sys.stderr)
+        else:
+            print(f"└── Including: All files (no filter)", file=sys.stderr)
+
+        print("", file=sys.stderr)
+
+    def get_meta_content(self) -> str:
+        """Generate .pm_encoder_meta file content."""
+        if not self.active_lens:
+            return ""
+
+        lens_def = self.active_lens_config
+        description = lens_def.get("description", "Custom lens")
+
+        lines = [
+            f"Context generated with lens: \"{self.active_lens}\"",
+            f"Focus: {description}",
+            ""
+        ]
+
+        if lens_def.get("truncate_mode") == "structure":
+            lines.append("Implementation details truncated using structure mode")
+            lines.append("Output shows only:")
+            lines.append("  - Import/export statements")
+            lines.append("  - Class and function signatures")
+            lines.append("  - Type definitions and interfaces")
+            lines.append("  - Module-level documentation")
+        elif lens_def.get("truncate", 0) > 0:
+            lines.append(f"Files truncated to {lens_def['truncate']} lines using {lens_def.get('truncate_mode', 'simple')} mode")
+        else:
+            lines.append("Full file contents included (no truncation)")
+
+        lines.append("")
+        lines.append(f"Generated: {__import__('datetime').datetime.now().isoformat()}")
+        lines.append(f"pm_encoder version: {__version__}")
+
+        return '\n'.join(lines)
+
+
+def load_config(config_path: Optional[Path]) -> Tuple[List[str], List[str], Dict[str, Dict]]:
+    """Loads ignore and include patterns, and custom lenses from a JSON config file."""
     # Default patterns to ignore common build artifacts and vcs folders
     ignore_patterns = [".git", "target", ".venv", "__pycache__", "*.pyc", "*.swp"]
     include_patterns = []
+    custom_lenses = {}
 
     if config_path and config_path.is_file():
         try:
@@ -708,10 +1056,11 @@ def load_config(config_path: Optional[Path]) -> Tuple[List[str], List[str]]:
                 data = json.load(f)
                 ignore_patterns.extend(data.get("ignore_patterns", []))
                 include_patterns.extend(data.get("include_patterns", []))
+                custom_lenses = data.get("lenses", {})
         except (json.JSONDecodeError, IOError) as e:
             print(f"Warning: Could not read or parse {config_path}: {e}", file=sys.stderr)
 
-    return ignore_patterns, include_patterns
+    return ignore_patterns, include_patterns, custom_lenses
 
 def is_binary(file_path: Path) -> bool:
     """
@@ -789,8 +1138,21 @@ def serialize(
     truncate_exclude: list = None,
     show_stats: bool = False,
     language_plugins_dir: Optional[Path] = None,
+    lens_manager: Optional['LensManager'] = None,
 ):
     """Collects, sorts, and serializes files based on specified criteria."""
+
+    # Inject .pm_encoder_meta file if lens is active
+    if lens_manager and lens_manager.active_lens:
+        meta_content = lens_manager.get_meta_content()
+        meta_path = Path(".pm_encoder_meta")
+        output_stream.write(f"++++++++++ {meta_path.as_posix()} ++++++++++\n")
+        output_stream.write(meta_content)
+        if not meta_content.endswith('\n'):
+            output_stream.write('\n')
+        checksum = hashlib.md5(meta_content.encode('utf-8')).hexdigest()
+        output_stream.write(f"---------- {meta_path.as_posix()} {checksum} {meta_path.as_posix()} ----------\n")
+
     files_to_process = []
 
     # Initialize language analyzer registry
@@ -1118,8 +1480,8 @@ Examples:
     # Truncation options
     parser.add_argument("--truncate", type=int, metavar="N", default=0,
                         help="Truncate files exceeding N lines (default: 0 = no truncation)")
-    parser.add_argument("--truncate-mode", choices=["simple", "smart"], default="simple",
-                        help="Truncation strategy: 'simple' (keep first N lines) or 'smart' (language-aware)")
+    parser.add_argument("--truncate-mode", choices=["simple", "smart", "structure"], default="simple",
+                        help="Truncation strategy: 'simple' (keep first N lines), 'smart' (language-aware), or 'structure' (signatures only)")
     parser.add_argument("--truncate-summary", action="store_true", default=True,
                         help="Include analysis summary in truncation marker (default: True)")
     parser.add_argument("--no-truncate-summary", dest="truncate_summary", action="store_false",
@@ -1130,6 +1492,10 @@ Examples:
                         help="Show detailed truncation statistics report")
     parser.add_argument("--language-plugins", type=Path, metavar="DIR",
                         help="Custom language analyzer plugins directory")
+
+    # Context Lenses (v1.2.0)
+    parser.add_argument("--lens", type=str, metavar="NAME",
+                        help="Apply a context lens (architecture|debug|security|onboarding|custom)")
 
     args = parser.parse_args()
 
@@ -1150,9 +1516,52 @@ Examples:
         print(f"Error: Project root '{args.project_root}' is not a valid directory.", file=sys.stderr)
         sys.exit(1)
 
-    ignore_patterns, include_patterns = load_config(args.config)
+    ignore_patterns, include_patterns, custom_lenses = load_config(args.config)
 
-    # Handle command-line overrides
+    # Initialize lens manager with custom lenses
+    lens_manager = LensManager(custom_lenses)
+
+    # Apply lens if specified
+    if args.lens:
+        base_config = {
+            "ignore_patterns": ignore_patterns,
+            "include_patterns": include_patterns,
+            "sort_by": args.sort_by,
+            "sort_order": args.sort_order,
+            "truncate": args.truncate,
+            "truncate_mode": args.truncate_mode,
+            "truncate_exclude": args.truncate_exclude,
+        }
+
+        try:
+            lens_config = lens_manager.apply_lens(args.lens, base_config)
+
+            # Override with lens settings (layered precedence: CLI > Lens > Config > Default)
+            # Note: CLI args already override, so lens only overrides base config
+            if not args.include:  # Only apply lens include if CLI didn't override
+                include_patterns = lens_config["include_patterns"]
+            ignore_patterns = lens_config["ignore_patterns"]
+            sort_by_arg = lens_config["sort_by"]
+            sort_order_arg = lens_config["sort_order"]
+            truncate_arg = lens_config.get("truncate", args.truncate)
+            truncate_mode_arg = lens_config.get("truncate_mode", args.truncate_mode)
+            truncate_exclude_arg = lens_config.get("truncate_exclude", args.truncate_exclude)
+
+            # Print lens manifest to stderr
+            lens_manager.print_manifest()
+
+        except ValueError as e:
+            print(f"Error: {e}", file=sys.stderr)
+            sys.exit(1)
+    else:
+        # No lens - use args directly
+        sort_by_arg = args.sort_by
+        sort_order_arg = args.sort_order
+        truncate_arg = args.truncate
+        truncate_mode_arg = args.truncate_mode
+        truncate_exclude_arg = args.truncate_exclude
+
+    # Handle command-line overrides (these always win over lens settings)
     if args.include:
         print(f"Overriding include patterns with CLI arguments: {args.include}", file=sys.stderr)
         include_patterns = args.include
@@ -1162,10 +1571,10 @@ Examples:
         ignore_patterns.extend(args.exclude)
 
     # Show truncation info
-    if args.truncate > 0:
-        print(f"\nTruncation enabled: {args.truncate} lines per file ({args.truncate_mode} mode)", file=sys.stderr)
-        if args.truncate_exclude:
-            print(f"Truncation exclusions: {args.truncate_exclude}", file=sys.stderr)
+    if truncate_arg > 0:
+        print(f"\nTruncation enabled: {truncate_arg} lines per file ({truncate_mode_arg} mode)", file=sys.stderr)
+        if truncate_exclude_arg:
+            print(f"Truncation exclusions: {truncate_exclude_arg}", file=sys.stderr)
 
     print(f"\nSerializing '{args.project_root}'...", file=sys.stderr)
 
@@ -1175,14 +1584,15 @@ Examples:
             args.output,
             ignore_patterns,
             include_patterns,
-            args.sort_by,
-            args.sort_order,
-            truncate_lines=args.truncate,
-            truncate_mode=args.truncate_mode,
+            sort_by_arg,
+            sort_order_arg,
+            truncate_lines=truncate_arg,
+            truncate_mode=truncate_mode_arg,
             truncate_summary=args.truncate_summary,
-            truncate_exclude=args.truncate_exclude,
-            show_stats=args.truncate_stats or args.truncate > 0,
+            truncate_exclude=truncate_exclude_arg,
+            show_stats=args.truncate_stats or truncate_arg > 0,
             language_plugins_dir=args.language_plugins,
+            lens_manager=lens_manager if args.lens else None,
         )
         print(f"\nSuccessfully serialized project.", file=sys.stderr)
     finally:
