@@ -5,14 +5,19 @@ using the Plus/Minus format, with robust directory pruning,
 filtering, and sorting capabilities.
 """
 
+__version__ = "1.0.0"
+__author__ = "pm_encoder contributors"
+__license__ = "MIT"
+
 import argparse
 import hashlib
 import json
 import sys
 from pathlib import Path
 from fnmatch import fnmatch
+from typing import Optional, Tuple, List
 
-def load_config(config_path: Path | None) -> tuple[list[str], list[str]]:
+def load_config(config_path: Optional[Path]) -> Tuple[List[str], List[str]]:
     """Loads ignore and include patterns from a JSON config file."""
     # Default patterns to ignore common build artifacts and vcs folders
     ignore_patterns = [".git", "target", ".venv", "__pycache__", "*.pyc", "*.swp"]
@@ -41,7 +46,7 @@ def is_binary(file_path: Path) -> bool:
     except IOError:
         return True # If we can't read it, treat it as problematic
 
-def read_file_content(file_path: Path) -> str | None:
+def read_file_content(file_path: Path) -> Optional[str]:
     """
     Reads a file's content, skipping binary files and large files.
     Tries UTF-8 then latin-1 encoding for text files.
@@ -147,6 +152,7 @@ def main():
         description="Serialize project files into the Plus/Minus format.",
         formatter_class=argparse.RawTextHelpFormatter
     )
+    parser.add_argument("--version", action="version", version=f"pm_encoder {__version__}")
     parser.add_argument("project_root", type=Path, help="The root directory of the project to serialize.")
     parser.add_argument("-o", "--output", type=argparse.FileType('w', encoding='utf-8'), default=sys.stdout,
                         help="Output file path. Defaults to standard output.")

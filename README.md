@@ -1,5 +1,8 @@
 # Project Encoder (`pm_encoder.py`)
 
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
+[![Python 3.6+](https://img.shields.io/badge/python-3.6+-blue.svg)](https://www.python.org/downloads/)
+
 `pm_encoder.py` is a powerful command-line utility designed to serialize a project's source files into a single, well-structured text file. This is ideal for sharing project context with Large Language Models (LLMs), creating context packages for new developers, or for archival purposes.
 
 The script uses a custom "Plus/Minus" format that is both human-readable and easy for other scripts to parse. It offers robust filtering capabilities through a JSON configuration file and command-line arguments.
@@ -33,19 +36,51 @@ The script outputs files in the following format:
 
 ## Installation
 
-1.  Place the `pm_encoder.py` script in a `scripts/` directory within your project.
-2.  Make the script executable:
-    ```bash
-    chmod +x scripts/pm_encoder.py
-    ```
-3.  (Optional) Create a `.pm_encoder_config.json` file in your project's root directory to define default filters. See the **Configuration** section below for an example.
+### Option 1: Quick Download (Single File)
+
+Download the script directly:
+
+```bash
+# Download to current directory
+curl -O https://raw.githubusercontent.com/alanbld/pm_encoder/main/pm_encoder.py
+chmod +x pm_encoder.py
+
+# Or download to a scripts/ directory
+mkdir -p scripts
+curl -o scripts/pm_encoder.py https://raw.githubusercontent.com/alanbld/pm_encoder/main/pm_encoder.py
+chmod +x scripts/pm_encoder.py
+```
+
+### Option 2: Git Clone (Full Repository)
+
+Clone the repository for full access to examples and documentation:
+
+```bash
+git clone https://github.com/alanbld/pm_encoder.git
+cd pm_encoder
+chmod +x pm_encoder.py
+```
+
+### Option 3: Copy to Your Project
+
+1. Place the `pm_encoder.py` script in a `scripts/` directory within your project.
+2. Make the script executable:
+   ```bash
+   chmod +x scripts/pm_encoder.py
+   ```
+
+### Configuration (Optional)
+
+Create a `.pm_encoder_config.json` file in your project's root directory to define default filters. See the **Configuration** section below for an example, or copy from `examples/.pm_encoder_config.json`.
 
 ## Usage
 
 The script is run from the command line.
 
 ```
-usage: pm_encoder.py [-h] [-o OUTPUT] [-c CONFIG] [--include [INCLUDE ...]] [--exclude [EXCLUDE ...]] project_root
+usage: pm_encoder.py [-h] [--version] [-o OUTPUT] [-c CONFIG] [--include [INCLUDE ...]]
+                     [--exclude [EXCLUDE ...]] [--sort-by {name,mtime,ctime}]
+                     [--sort-order {asc,desc}] project_root
 
 Serialize project files into the Plus/Minus format.
 
@@ -54,6 +89,7 @@ positional arguments:
 
 options:
   -h, --help            show this help message and exit
+  --version             show program's version number and exit
   -o OUTPUT, --output OUTPUT
                         Output file path. Defaults to standard output.
   -c CONFIG, --config CONFIG
@@ -63,6 +99,11 @@ options:
                         One or more glob patterns for files to include. Overrides config includes.
   --exclude [EXCLUDE ...]
                         One or more glob patterns for files/dirs to exclude. Adds to config excludes.
+  --sort-by {name,mtime,ctime}
+                        Sort files by 'name' (default), 'mtime' (modification time),
+                        or 'ctime' (creation time).
+  --sort-order {asc,desc}
+                        Sort order: 'asc' (ascending, default) or 'desc' (descending).
 ```
 
 ---
