@@ -47,24 +47,42 @@ pm_encoder is a **meta-tool for AI collaboration** — it exists to facilitate e
 Before submitting, verify:
 
 - [ ] `./pm_encoder.py --version` outputs correct version
+- [ ] All unit tests pass: `python3 -m unittest tests/test_pm_encoder.py`
 - [ ] `./pm_encoder.py . -o /tmp/test.txt` succeeds (self-serialization)
 - [ ] Plus/Minus format output is valid
 - [ ] No external dependencies added
 - [ ] Code works on Python 3.6+
+- [ ] New features include unit tests (see Testing section)
 
 ### Testing
 
-Run the self-serialization test:
+**Run the comprehensive test suite:**
 ```bash
-./pm_encoder.py . -o /tmp/test_output.txt
-echo $?  # Should be 0
+# Run all tests
+python3 -m unittest tests/test_pm_encoder.py
+
+# Run with verbose output
+python3 -m unittest tests/test_pm_encoder.py -v
+
+# Run specific test
+python3 -m unittest tests.test_pm_encoder.TestStructureMode.test_structure_mode_trigger
 ```
 
-Verify checksum integrity:
+**Self-serialization test:**
 ```bash
-# The output file should contain valid Plus/Minus format
+# Basic functionality test
+./pm_encoder.py . -o /tmp/test_output.txt
+echo $?  # Should be 0
+
+# Verify checksum integrity
 head -1 /tmp/test_output.txt  # Should start with ++++++++++
 ```
+
+**Test requirements for new features:**
+- All new features **must include unit tests** in `tests/test_pm_encoder.py`
+- Tests should use only standard library (unittest, tempfile, shutil)
+- Verify tests pass before submitting PR
+- Add test descriptions in docstrings
 
 ## Submitting Changes
 
@@ -81,7 +99,7 @@ head -1 /tmp/test_output.txt  # Should start with ++++++++++
 3. Open a Pull Request with:
    - Clear description of changes
    - Reference to any related issues
-   - Self-serialization test results
+   - Test results (unit tests + self-serialization)
 
 ## Commit Message Format
 
