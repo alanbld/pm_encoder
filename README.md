@@ -18,6 +18,10 @@ The script uses a custom "Plus/Minus" format that is both human-readable and eas
 - **Directory Pruning**: Efficiently skips entire directories (like `target/` or `node_modules/`) that match ignore patterns.
 - **Large File Skipping**: Avoids including files over a certain size (default: 5MB) to keep the output manageable.
 - **Standard I/O**: Writes to standard output by default, allowing it to be piped to other commands (e.g., clipboards).
+- **🆕 Intelligent Truncation** (v1.1+): Language-aware file truncation to reduce token usage while preserving critical code structures.
+- **🆕 Multi-Language Support** (v1.1+): Built-in analyzers for Python, JavaScript/TypeScript, Shell, Markdown, JSON, and YAML.
+- **🆕 Plugin System** (v1.1+): Extensible architecture for community-contributed language analyzers.
+- **🆕 Token Optimization** (v1.1+): Detailed statistics on size and token reduction.
 
 ## The Plus/Minus Format
 
@@ -158,6 +162,94 @@ Create a package containing only Python scripts (`*.py`) and shell scripts (`*.s
   --include "*.py" "*.sh" \
   --exclude ".venv" \
   -o scripts_only.txt
+```
+
+### 6. Token Optimization with Truncation (v1.1+)
+
+When sharing large projects with LLMs, you may hit token limits. Use intelligent truncation to reduce file sizes while preserving the most important code:
+
+```bash
+# Smart truncation (500 lines per file, language-aware)
+./pm_encoder.py . --truncate 500 --truncate-mode smart -o context.txt
+
+# Show truncation statistics
+./pm_encoder.py . --truncate 300 --truncate-stats
+
+# Exclude certain files from truncation
+./pm_encoder.py . --truncate 500 --truncate-exclude "README.md" "LICENSE"
+
+# Simple truncation (just keep first N lines)
+./pm_encoder.py . --truncate 200 --truncate-mode simple -o quick.txt
+```
+
+**Smart truncation** analyzes each file's language and preserves:
+- Import statements and dependencies
+- Class and function signatures
+- Entry points (main functions, exports)
+- Critical code sections
+- Documentation headers
+
+**Example truncation output:**
+```
+++++++++++ src/database/handler.py [TRUNCATED: 873 lines] ++++++++++
+[First 250 lines showing imports, class definitions, key functions]
+
+... [400 lines omitted] ...
+
+[Last 50 lines showing main entry point]
+
+======================================================================
+TRUNCATED at line 500/873 (42% reduction)
+Language: Python
+Category: Application Module
+Classes (5): DatabaseHandler, MigrationRunner, SchemaValidator
+Functions (23): apply_migration, rollback, validate_schema, ...
+Key imports: psycopg2, sqlalchemy, pandas
+
+To get full content: --include "src/database/handler.py" --truncate 0
+======================================================================
+---------- src/database/handler.py [TRUNCATED:873→300] a7b3c9d2... ----------
+```
+
+---
+
+## Language Support (v1.1+)
+
+pm_encoder includes built-in intelligent truncation for multiple programming languages:
+
+| Language | Extensions | Detected Features |
+|----------|-----------|-------------------|
+| **Python** | `.py`, `.pyw` | Classes, functions, imports, `__main__` blocks, docstrings, TODO/FIXME markers |
+| **JavaScript/TypeScript** | `.js`, `.jsx`, `.ts`, `.tsx`, `.mjs`, `.cjs` | Classes, functions, arrow functions, imports, exports, JSDoc |
+| **Shell** | `.sh`, `.bash`, `.zsh`, `.fish` | Functions, sourced files, shebang |
+| **Markdown** | `.md`, `.markdown` | Headers, code blocks, links, table of contents |
+| **JSON** | `.json` | Keys, nested structure depth, value types |
+| **YAML** | `.yaml`, `.yml` | Keys, nested structure |
+
+### Extending Language Support
+
+Create custom language analyzers for additional languages:
+
+```bash
+# Generate a plugin template
+./pm_encoder.py --create-plugin Rust > rust_analyzer.py
+
+# Or get AI assistance
+./pm_encoder.py --plugin-prompt Kotlin > kotlin_prompt.txt
+```
+
+See [PLUGIN_GUIDE.md](PLUGIN_GUIDE.md) for complete plugin development documentation.
+
+### Community Plugins
+
+Example plugins available in `examples/plugins/`:
+- **Rust** (`rust_analyzer.py`): Structs, traits, functions, use statements
+
+To use community plugins:
+```bash
+mkdir -p ~/.pm_encoder/plugins/
+cp examples/plugins/rust_analyzer.py ~/.pm_encoder/plugins/
+./pm_encoder.py . --truncate 500 --language-plugins ~/.pm_encoder/plugins/
 ```
 
 ---

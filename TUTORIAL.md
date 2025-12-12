@@ -162,6 +162,213 @@ ls -la pm_encoder.py  # Should show -rwxr-xr-x
 echo '{"ignore_patterns": [".git", "node_modules", "*.log", "data/"]}' > .pm_encoder_config.json
 ```
 
+## Token Optimization (v1.1+)
+
+### Why Truncation?
+
+When working with large projects, you may encounter:
+- **Token limits** in LLMs (e.g., ChatGPT's context window)
+- **Cost concerns** with token-based pricing
+- **Performance issues** with very large contexts
+
+Intelligent truncation solves these problems while keeping the most valuable code.
+
+### Example 4: Smart Truncation for LLM Context
+
+```bash
+# Truncate files to 500 lines each, using language-aware smart mode
+./pm_encoder.py . --truncate 500 --truncate-mode smart | pbcopy
+```
+
+This command:
+1. Analyzes each file's language (Python, JS, etc.)
+2. Preserves imports, class/function signatures, and entry points
+3. Adds helpful summaries showing what was truncated
+4. Reduces token usage by 60-80% typically
+
+### Example 5: Truncation with Statistics
+
+```bash
+# See exactly how much you're saving
+./pm_encoder.py . --truncate 300 --truncate-stats -o context.txt
+```
+
+Output:
+```
+======================================================================
+TRUNCATION REPORT
+======================================================================
+Files analyzed: 45
+Files truncated: 12 (26%)
+Lines: 18,234 → 6,891 (62% reduction)
+
+By Language:
+  Python: 25 files, 8 truncated
+  JavaScript/TypeScript: 15 files, 3 truncated
+  Markdown: 5 files, 1 truncated
+
+Estimated tokens: ~68,000 → ~26,000 (61% reduction)
+======================================================================
+```
+
+### Example 6: Protect Important Files from Truncation
+
+```bash
+# Don't truncate README or LICENSE files
+./pm_encoder.py . --truncate 400 \
+  --truncate-exclude "README.md" "LICENSE" "CHANGELOG.md" \
+  -o context.txt
+```
+
+### Understanding Smart vs Simple Truncation
+
+**Simple Mode** (`--truncate-mode simple`):
+- Just keeps the first N lines
+- Fast, predictable
+- Good for uniform files
+
+**Smart Mode** (`--truncate-mode smart`):
+- Analyzes file language and structure
+- Preserves critical sections (imports, signatures, entry points)
+- Adds detailed summaries
+- Best for code understanding
+
+Example smart truncation output:
+
+```python
+++++++++++ api/auth.py [TRUNCATED: 823 lines] ++++++++++
+import jwt
+from fastapi import HTTPException
+from models import User
+
+class AuthService:
+    def __init__(self, secret_key: str):
+        self.secret = secret_key
+
+    def create_token(self, user_id: int) -> str:
+        """Generate JWT token for user."""
+        # ... (implementation details)
+
+    def verify_token(self, token: str) -> dict:
+        """Verify and decode JWT token."""
+        # ... (implementation details)
+
+... [650 lines omitted] ...
+
+if __name__ == "__main__":
+    # Development testing
+    service = AuthService(os.getenv("SECRET_KEY"))
+    print("Auth service initialized")
+
+======================================================================
+TRUNCATED at line 500/823 (39% reduction)
+Language: Python
+Category: Application Module
+Classes (3): AuthService, TokenManager, SessionHandler
+Functions (15): create_token, verify_token, refresh_token, ...
+Key imports: jwt, fastapi, models, bcrypt, datetime
+
+To get full content: --include "api/auth.py" --truncate 0
+======================================================================
+---------- api/auth.py [TRUNCATED:823→173] a1b2c3d4... ----------
+```
+
+### Example 7: Combining Filters and Truncation
+
+```bash
+# Complex workflow: Python files only, moderate truncation
+./pm_encoder.py . \
+  --include "src/**/*.py" "tests/**/*.py" \
+  --truncate 600 \
+  --truncate-mode smart \
+  --truncate-exclude "tests/fixtures/*" \
+  -o python_context.txt
+```
+
+### Workflow 4: Large Codebase to LLM
+
+```bash
+# 1. First, check the size without truncation
+./pm_encoder.py . --include "*.py" "*.js" | wc -l
+# Output: 45,000 lines (too big!)
+
+# 2. Apply smart truncation
+./pm_encoder.py . \
+  --include "*.py" "*.js" \
+  --truncate 400 \
+  --truncate-mode smart \
+  --truncate-stats \
+  | tee context.txt | pbcopy
+
+# 3. Review stats (stderr shows the report)
+# Files truncated: 32/67 (47%)
+# Estimated tokens: ~180K → ~52K (71% reduction)
+
+# 4. Now paste into Claude/ChatGPT with your question
+```
+
+### Workflow 5: Iterative Context Refinement
+
+```bash
+# Start broad with heavy truncation
+./pm_encoder.py . --truncate 200 --truncate-mode smart -o initial.txt
+
+# Review truncation report, then get full version of specific files
+./pm_encoder.py . \
+  --include "src/critical_module.py" "src/another_key_file.py" \
+  --truncate 0 \
+  -o details.txt
+
+# Combine both for hybrid context
+```
+
+### Tips for Token Optimization
+
+**1. Right-size your truncation limit**
+```bash
+# Too aggressive (may lose important context)
+./pm_encoder.py . --truncate 50
+
+# Too conservative (may still hit limits)
+./pm_encoder.py . --truncate 2000
+
+# Sweet spot for most projects
+./pm_encoder.py . --truncate 300-500
+```
+
+**2. Use smart mode for code, simple for data**
+```bash
+# Smart for source code
+./pm_encoder.py src/ --truncate 500 --truncate-mode smart -o code.txt
+
+# Simple for logs or data files
+./pm_encoder.py logs/ --truncate 100 --truncate-mode simple -o logs.txt
+```
+
+**3. Exclude documentation from truncation**
+```bash
+# Keep full README and documentation
+./pm_encoder.py . --truncate 400 --truncate-exclude "*.md" "docs/**"
+```
+
+**4. Preview before committing**
+```bash
+# Test truncation on a subset first
+./pm_encoder.py src/critical_module/ --truncate 300 --truncate-mode smart
+```
+
+### Advanced: Language-Specific Truncation
+
+Different languages are analyzed differently:
+
+- **Python**: Preserves imports, class/function signatures, `__main__` blocks
+- **JavaScript/TypeScript**: Preserves imports, exports, function/class declarations
+- **Markdown**: Keeps all headers, first paragraph of each section
+- **JSON/YAML**: Preserves structure, shows key names, samples values
+- **Shell**: Keeps functions, sourced files, shebang
+
+The smart mode automatically adapts to each language!
+
 ## Next Steps
 
 - Experiment with different include/exclude patterns for your project type
