@@ -5,6 +5,43 @@ All notable changes to pm_encoder will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.3.1] - 2025-12-13
+
+### Added - Modern Dev Bootstrap
+- **scripts/bootstrap.sh**: uv-based development environment setup
+  - Checks for `uv` installation with install instructions
+  - Creates isolated `.venv` virtual environment
+  - Installs `pytest`, `pytest-cov`, `coverage`
+  - Single command: `make bootstrap`
+
+### Added - Makefile Improvements
+- **Auto-detection**: Makefile now auto-detects `.venv` and uses it if present
+- **New commands**: `make bootstrap`, `make check-env`, `make test-pytest`
+- **Graceful fallback**: Falls back to system Python if no venv exists
+
+### Added - The Turing Audit
+- **99% test coverage target** established
+- **93 comprehensive tests** passing
+- **Self-healing documentation** system
+- **Living docs** that stay in sync with code
+
+### Added - Documentation
+- **docs/MULTI_AI_STORY.html**: The multi-AI collaborative development story
+
+### Technical Details
+- Zero external dependencies for core functionality
+- Development dependencies isolated via uv
+- Cross-platform bootstrap script (bash)
+
+## [1.3.0] - 2025-12-13
+
+### Added - Reference Quality Update
+- **94% test coverage** (752/800 lines)
+- **90 comprehensive tests** (up from 10)
+- **QA Infrastructure**: Makefile, CI/CD, living docs
+- **TESTING.md**: 2000+ line comprehensive testing guide
+- **QA_INFRASTRUCTURE.md**: Quality tracking documentation
+
 ## [1.2.2] - 2025-12-12
 
 ### Added - Native Rust Support
