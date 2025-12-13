@@ -5,7 +5,7 @@ using the Plus/Minus format, with robust directory pruning,
 filtering, and sorting capabilities.
 """
 
-__version__ = "1.2.1"
+__version__ = "1.2.2"
 __author__ = "pm_encoder contributors"
 __license__ = "MIT"
 
@@ -647,6 +647,137 @@ class YAMLAnalyzer(LanguageAnalyzer):
         }
 
 
+class RustAnalyzer(LanguageAnalyzer):
+    """Analyzer for Rust source files."""
+
+    SUPPORTED_EXTENSIONS = ['.rs']
+    LANGUAGE_NAME = "Rust"
+
+    def analyze_lines(self, lines: List[str], file_path: Path) -> Dict[str, Any]:
+        """Analyze pre-split lines for Rust code."""
+        structs = []
+        functions = []
+        traits = []
+        impls = []
+        uses = []
+        entry_points = []
+        markers = []
+
+        # Regex patterns for Rust
+        struct_pattern = re.compile(r'^\s*(?:pub\s+)?struct\s+(\w+)')
+        fn_pattern = re.compile(r'^\s*(?:pub\s+)?(?:async\s+)?fn\s+(\w+)')
+        trait_pattern = re.compile(r'^\s*(?:pub\s+)?trait\s+(\w+)')
+        impl_pattern = re.compile(r'^\s*impl(?:\s+<[^>]+>)?\s+(\w+)')
+        use_pattern = re.compile(r'^\s*use\s+([^;]+);')
+        mod_pattern = re.compile(r'^\s*(?:pub\s+)?mod\s+(\w+)')
+        marker_pattern = re.compile(r'//\s*(TODO|FIXME|XXX|HACK|NOTE):?\s*(.+)', re.IGNORECASE)
+
+        for i, line in enumerate(lines, 1):
+            # Structs
+            if match := struct_pattern.match(line):
+                structs.append(match.group(1))
+
+            # Functions
+            if match := fn_pattern.match(line):
+                fn_name = match.group(1)
+                functions.append(fn_name)
+                if fn_name == 'main':
+                    entry_points.append(('fn main', i))
+
+            # Traits
+            if match := trait_pattern.match(line):
+                traits.append(match.group(1))
+
+            # Impls
+            if match := impl_pattern.match(line):
+                impls.append(match.group(1))
+
+            # Uses
+            if match := use_pattern.match(line):
+                uses.append(match.group(1).strip())
+
+            # Markers
+            if match := marker_pattern.search(line):
+                markers.append((match.group(1), match.group(2).strip(), i))
+
+        # Categorize
+        category = "library"
+        if 'main' in functions:
+            category = "application"
+        if file_path and ('test' in str(file_path).lower() or 'tests/' in str(file_path)):
+            category = "test"
+
+        return {
+            "language": "Rust",
+            "classes": structs + traits,
+            "functions": functions[:20],
+            "imports": uses[:10],
+            "entry_points": [ep[0] for ep in entry_points],
+            "config_keys": [],
+            "documentation": [],
+            "markers": [f"{m[0]} (line {m[2]})" for m in markers[:5]],
+            "category": category,
+            "critical_sections": [(ep[1], ep[1] + 20) for ep in entry_points]
+        }
+
+    def get_structure_ranges(self, lines: List[str]) -> List[Tuple[int, int]]:
+        """Return line ranges for structure-only view (signatures only)."""
+        keep_ranges = []
+
+        # Patterns for Rust structural elements
+        use_pattern = re.compile(r'^\s*use\s+')
+        mod_pattern = re.compile(r'^\s*(?:pub\s+)?mod\s+')
+        struct_pattern = re.compile(r'^\s*(?:pub\s+)?struct\s+')
+        fn_pattern = re.compile(r'^\s*(?:pub\s+)?(?:async\s+)?fn\s+')
+        trait_pattern = re.compile(r'^\s*(?:pub\s+)?trait\s+')
+        impl_pattern = re.compile(r'^\s*impl(?:\s+<[^>]+>)?\s+')
+
+        for i, line in enumerate(lines, 1):
+            # Keep use statements
+            if use_pattern.match(line):
+                keep_ranges.append((i, i))
+
+            # Keep mod declarations
+            if mod_pattern.match(line):
+                keep_ranges.append((i, i))
+
+            # Keep struct definitions
+            if struct_pattern.match(line):
+                keep_ranges.append((i, i))
+
+            # Keep function signatures
+            if fn_pattern.match(line):
+                keep_ranges.append((i, i))
+
+            # Keep trait definitions
+            if trait_pattern.match(line):
+                keep_ranges.append((i, i))
+
+            # Keep impl blocks
+            if impl_pattern.match(line):
+                keep_ranges.append((i, i))
+
+        return self._merge_consecutive_ranges(keep_ranges)
+
+    def _merge_consecutive_ranges(self, ranges: List[Tuple[int, int]]) -> List[Tuple[int, int]]:
+        """Merge consecutive line ranges for cleaner output."""
+        if not ranges:
+            return []
+
+        sorted_ranges = sorted(ranges, key=lambda x: x[0])
+        merged = [sorted_ranges[0]]
+
+        for current in sorted_ranges[1:]:
+            last = merged[-1]
+            # If current range starts within or adjacent to last range, merge
+            if current[0] <= last[1] + 1:
+                merged[-1] = (last[0], max(last[1], current[1]))
+            else:
+                merged.append(current)
+
+        return merged
+
+
 class LanguageAnalyzerRegistry:
     """Registry for managing language analyzers."""
 
@@ -665,7 +796,8 @@ class LanguageAnalyzerRegistry:
             ShellAnalyzer,
             MarkdownAnalyzer,
             JSONAnalyzer,
-            YAMLAnalyzer
+            YAMLAnalyzer,
+            RustAnalyzer
         ]:
             analyzer = analyzer_class()
             for ext in analyzer.SUPPORTED_EXTENSIONS:
@@ -903,7 +1035,7 @@ class LensManager:
             "truncate_mode": "structure",
             "truncate": 2000,  # Safety limit for non-code files
             "exclude": ["tests/**", "test/**", "docs/**", "doc/**", "assets/**", "*.log", "__pycache__"],
-            "include": ["*.py", "*.js", "*.ts", "*.jsx", "*.tsx", "*.json", "*.toml", "*.yaml", "*.yml", "Dockerfile", "*.md"],
+            "include": ["*.py", "*.js", "*.ts", "*.jsx", "*.tsx", "*.rs", "*.json", "*.toml", "*.yaml", "*.yml", "Dockerfile", "*.md"],
             "sort_by": "name",
             "sort_order": "asc"
         },

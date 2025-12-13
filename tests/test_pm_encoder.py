@@ -216,6 +216,85 @@ function helperFunction(x, y) {
         self.assertIn("key1", truncated)
         self.assertIn("value1", truncated)
 
+    def test_rust_structure(self):
+        """Test Rust structure extraction preserves signatures, removes bodies."""
+        rust_content = """use std::io;
+use std::collections::HashMap;
+
+pub struct Config {
+    name: String,
+    value: i32,
+}
+
+impl Config {
+    pub fn new(name: String) -> Self {
+        Config {
+            name,
+            value: 0,
+        }
+    }
+
+    pub fn set_value(&mut self, val: i32) {
+        self.value = val;
+    }
+}
+
+pub trait Processable {
+    fn process(&self) -> Result<(), String>;
+}
+
+pub async fn async_handler(data: Vec<u8>) -> Result<(), io::Error> {
+    // Process data asynchronously
+    let processed = data.iter().map(|x| x * 2).collect();
+    Ok(())
+}
+
+fn main() {
+    let mut config = Config::new("test".to_string());
+    config.set_value(42);
+    println!("Value: {}", config.value);
+}
+"""
+        analyzer = pm_encoder.RustAnalyzer()
+        lines = rust_content.split('\n')
+        structure_ranges = analyzer.get_structure_ranges(lines)
+
+        # Extract structure lines
+        kept_lines = []
+        for start, end in structure_ranges:
+            kept_lines.extend(lines[start-1:end])
+        structure_output = '\n'.join(kept_lines)
+
+        # Should include use statements
+        self.assertIn("use std::io", structure_output)
+        self.assertIn("use std::collections::HashMap", structure_output)
+
+        # Should include struct definition
+        self.assertIn("pub struct Config {", structure_output)
+
+        # Should include impl block
+        self.assertIn("impl Config {", structure_output)
+
+        # Should include function signatures
+        self.assertIn("pub fn new(name: String) -> Self {", structure_output)
+        self.assertIn("pub fn set_value(&mut self, val: i32) {", structure_output)
+
+        # Should include trait definition
+        self.assertIn("pub trait Processable {", structure_output)
+
+        # Should include async fn signature
+        self.assertIn("pub async fn async_handler(data: Vec<u8>) -> Result<(), io::Error> {", structure_output)
+
+        # Should include main function
+        self.assertIn("fn main() {", structure_output)
+
+        # Should NOT include implementation details
+        self.assertNotIn("name,", structure_output)
+        self.assertNotIn("value: 0,", structure_output)
+        self.assertNotIn("self.value = val;", structure_output)
+        self.assertNotIn("let processed = data.iter()", structure_output)
+        self.assertNotIn('println!("Value: {}", config.value);', structure_output)
+
 
 class TestLenses(unittest.TestCase):
     """Test Context Lenses functionality."""

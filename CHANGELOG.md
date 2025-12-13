@@ -5,6 +5,46 @@ All notable changes to pm_encoder will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.2.2] - 2025-12-12
+
+### Added - Native Rust Support
+- **RustAnalyzer** (pm_encoder.py:650-778): Full native support for Rust source files
+  - `analyze_lines()`: Detects structs, traits, impls, functions (sync/async), use statements, mod declarations, markers
+  - `get_structure_ranges()`: Structure mode support - extracts signatures while removing implementation details
+  - Entry point detection: Identifies `fn main()` as application entry point
+  - Categorization: Distinguishes between application, library, and test code
+- **Architecture lens**: Updated to include `*.rs` files in structure mode
+- **Language support matrix**: Rust now joins Python, JavaScript/TypeScript, Shell as fully supported languages with structure mode
+
+### Added - Technical Blueprint
+- **docs/BLUEPRINT.md**: Technical vision document for pm_encoder evolution
+  - Outlines transition from "Context Compression" to "AI Collaboration Infrastructure"
+  - Defines Core Philosophy: Context as the new Compilation, Intent beats Syntax
+  - Roadmap for v1.3.0 (Streaming + Interactive) and v1.4.0 (Declarative JSON Patterns)
+  - Establishes Python as the Reference Implementation
+
+### Added - Test Coverage
+- **test_rust_structure**: Comprehensive test for Rust structure extraction (tests/test_pm_encoder.py:219-296)
+  - Verifies use statements, struct definitions, impl blocks, trait definitions
+  - Validates async fn signatures, main function detection
+  - Confirms implementation details are removed (struct fields, function bodies)
+- **Test Results**: ✅ 10/10 tests passing (up from 9)
+
+### Changed
+- **Version bumped** to 1.2.2
+- **Built-in analyzers**: Now 7 total (added Rust to Python, JS/TS, Shell, Markdown, JSON, YAML)
+
+### Technical Details
+- Zero new external dependencies (still 100% Python standard library)
+- Rust patterns use regex (no proc-macro parsing required)
+- Structure mode preserves: `use`, `mod`, `struct`, `fn`, `async fn`, `trait`, `impl`
+- Smart truncation for Rust: Prioritizes type definitions, main function, and exports
+
+### Use Cases Unlocked
+- **Rust projects**: Architecture views for Rust codebases (cargo projects, embedded systems)
+- **Polyglot repos**: Seamless mixed Python/Rust/TypeScript project serialization
+- **Systems programming**: Share low-level code context with LLMs effectively
+
 ## [1.2.1] - 2025-12-12
 
 ### Fixed - Critical Logic Bugs
