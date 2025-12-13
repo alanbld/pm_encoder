@@ -45,3 +45,7 @@ ehthumbs.db
 # Rust
 rust/target/
 Cargo.lock
+
+# Test outputs
+/tmp/pm_*.txt
+test_vectors/*.actual.json
