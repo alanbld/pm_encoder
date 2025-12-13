@@ -306,7 +306,7 @@ class TestCLIComprehensive(unittest.TestCase):
         )
 
         self.assertEqual(result.returncode, 0)
-        self.assertIn("1.2.2", result.stdout)
+        self.assertIn("1.3.0", result.stdout)
 
     def test_main_create_plugin(self):
         """Test --create-plugin flag."""
