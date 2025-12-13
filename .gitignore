@@ -17,6 +17,11 @@ env/
 # Test output
 test_output/
 
+# Coverage reports
+.coverage
+htmlcov/
+.pytest_cache/
+
 # User config (keep example, ignore user's config)
 .pm_encoder_config.json
 
