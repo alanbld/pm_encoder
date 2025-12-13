@@ -1,0 +1,22 @@
+{
+  "name": "basic_file_serialization",
+  "description": "Single file with simple content",
+  "version": "1.0",
+  "input": {
+    "files": {
+      "README.md": "# Hello\n\nThis is a test.\n"
+    },
+    "config": {}
+  },
+  "expected": {
+    "format": "plus_minus",
+    "contains": [
+      "++++++++++ README.md ++++++++++",
+      "# Hello",
+      "This is a test.",
+      "---------- README.md"
+    ],
+    "checksum_present": true,
+    "notes": "Output must include MD5 checksum in closing marker"
+  }
+}

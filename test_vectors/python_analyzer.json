@@ -1,0 +1,23 @@
+{
+  "name": "python_structure_extraction",
+  "description": "Python file with class and function",
+  "version": "1.0",
+  "input": {
+    "files": {
+      "example.py": "class Foo:\n    def bar(self):\n        pass\n\ndef baz():\n    return 42\n"
+    },
+    "config": {
+      "truncate_mode": "structure"
+    }
+  },
+  "expected": {
+    "structures": [
+      {"type": "class", "name": "Foo", "line": 1},
+      {"type": "function", "name": "bar", "line": 2},
+      {"type": "function", "name": "baz", "line": 5}
+    ],
+    "truncated": true,
+    "contains_signatures": true,
+    "notes": "Structure mode should preserve class/function signatures but remove bodies"
+  }
+}
