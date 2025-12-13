@@ -18,6 +18,9 @@ The script uses a custom "Plus/Minus" format that is both human-readable and eas
 - **Directory Pruning**: Efficiently skips entire directories (like `target/` or `node_modules/`) that match ignore patterns.
 - **Large File Skipping**: Avoids including files over a certain size (default: 5MB) to keep the output manageable.
 - **Standard I/O**: Writes to standard output by default, allowing it to be piped to other commands (e.g., clipboards).
+- **🆕 AI IDE Integration** (v1.4+): One-command generation of CLAUDE.md / GEMINI_INSTRUCTIONS.txt with directory tree and statistics.
+- **🆕 Multi-AI Support** (v1.4+): Generate optimized context for Claude Code, Google AI Studio, and other AI development tools.
+- **🆕 Smart Command Detection** (v1.4+): Auto-detect project commands (npm, cargo, make, pip) from project files.
 - **🆕 Intelligent Truncation** (v1.1+): Language-aware file truncation to reduce token usage while preserving critical code structures.
 - **🆕 Multi-Language Support** (v1.1+): Built-in analyzers for Python, JavaScript/TypeScript, Shell, Markdown, JSON, and YAML.
 - **🆕 Plugin System** (v1.1+): Extensible architecture for community-contributed language analyzers.
@@ -30,7 +33,7 @@ This repository contains **two implementations** of pm_encoder:
 ### Python Implementation (Current Production)
 
 - **Location:** `pm_encoder.py` (root directory)
-- **Version:** 1.3.1
+- **Version:** 1.5.0
 - **Status:** Production-ready with 95% test coverage
 - **Best for:** Python ecosystem integration, rapid feature development
 - **Dependencies:** None (Python 3.6+ stdlib only)
@@ -245,6 +248,68 @@ Key imports: psycopg2, sqlalchemy, pandas
 To get full content: --include "src/database/handler.py" --truncate 0
 ======================================================================
 ---------- src/database/handler.py [TRUNCATED:873→300] a7b3c9d2... ----------
+```
+
+### 7. Claude Code / AI IDE Integration (v1.4.0+)
+
+Generate instant AI CLI integration files with directory tree and statistics:
+
+```bash
+# Generate CLAUDE.md + CONTEXT.txt (default: architecture lens)
+./pm_encoder.py . --init-prompt
+
+# Use debug lens (smaller, faster)
+./pm_encoder.py . --init-prompt --init-lens debug
+
+# Generate for Google AI Studio / Gemini
+./pm_encoder.py . --init-prompt --target gemini
+
+# Try different optimization lenses
+./pm_encoder.py . --init-prompt --init-lens security    # Security focus
+./pm_encoder.py . --init-prompt --init-lens onboarding  # New developer focus
+```
+
+**What gets generated:**
+
+1. **CLAUDE.md** or **GEMINI_INSTRUCTIONS.txt** (~1 KB) - Clean instructions with:
+   - Project directory tree (3 levels deep)
+   - File count and context size statistics
+   - Auto-detected commands (npm, cargo, make, pip)
+   - Reference to CONTEXT.txt
+
+2. **CONTEXT.txt** (varies) - Full serialized codebase
+
+**Benefits:**
+- ⚡ **Instant setup** - 2 seconds vs 30-60s manual /init
+- 🆓 **Zero cost** - No API calls, works offline
+- 📊 **Better context** - Lens-optimized, consistent quality
+- 🔄 **Regeneratable** - One command to update
+
+**Example generated CLAUDE.md:**
+```markdown
+# my_project
+
+## Project Structure
+```
+my_project/
+├── src/
+│   ├── main.rs
+│   └── lib.rs
+├── tests/
+│   └── integration_test.rs
+├── Cargo.toml
+└── README.md
+```
+
+**Statistics:**
+- Files: 15
+- Context size: 42,350 bytes (41.3 KB)
+
+## Commands
+- `cargo build`
+- `cargo test`
+
+For complete codebase, see `CONTEXT.txt`.
 ```
 
 ---

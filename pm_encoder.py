@@ -5,7 +5,7 @@ using the Plus/Minus format, with robust directory pruning,
 filtering, and sorting capabilities.
 """
 
-__version__ = "1.4.0"
+__version__ = "1.5.0"
 __author__ = "pm_encoder contributors"
 __license__ = "MIT"
 
@@ -1582,6 +1582,60 @@ The plugin should intelligently truncate {language_name} files while preserving:
     print(prompt)
 
 
+def generate_directory_tree(root: Path, ignore_patterns: List[str], max_depth: int = 3, prefix: str = "") -> List[str]:
+    """
+    Generate a visual directory tree representation.
+
+    Args:
+        root: Root directory path
+        ignore_patterns: Patterns to ignore
+        max_depth: Maximum depth to traverse
+        prefix: Current line prefix for tree drawing
+
+    Returns:
+        List of tree lines
+    """
+    if max_depth == 0:
+        return []
+
+    lines = []
+    try:
+        entries = sorted(root.iterdir(), key=lambda x: (not x.is_dir(), x.name.lower()))
+
+        # Filter out ignored paths
+        filtered_entries = []
+        for entry in entries:
+            # Skip hidden files
+            if entry.name.startswith('.'):
+                continue
+            # Check against ignore patterns
+            should_skip = False
+            for pattern in ignore_patterns:
+                if fnmatch(entry.name, pattern):
+                    should_skip = True
+                    break
+            if not should_skip:
+                filtered_entries.append(entry)
+
+        for i, entry in enumerate(filtered_entries):
+            is_last = i == len(filtered_entries) - 1
+            current_prefix = "└── " if is_last else "├── "
+            lines.append(f"{prefix}{current_prefix}{entry.name}{'/' if entry.is_dir() else ''}")
+
+            if entry.is_dir() and max_depth > 1:
+                extension = "    " if is_last else "│   "
+                lines.extend(generate_directory_tree(
+                    entry,
+                    ignore_patterns,
+                    max_depth - 1,
+                    prefix + extension
+                ))
+    except PermissionError:
+        pass
+
+    return lines
+
+
 def detect_project_commands(project_root: Path) -> List[str]:
     """
     Scan project directory for common build/test files and return appropriate commands.
@@ -1681,10 +1735,20 @@ def init_prompt(project_root: Path, lens_name: str = "architecture", target: str
             lens_manager=lens_manager,
         )
 
-    # Step 2: Detect project commands
+    # Step 2: Generate directory tree and calculate stats
+    config_path = project_root / ".pm_encoder_config.json"
+    ignore_patterns_tree, _, _ = load_config(config_path)
+    tree_lines = generate_directory_tree(project_root, ignore_patterns_tree, max_depth=3)
+    tree_str = "\n".join(tree_lines) if tree_lines else "(empty project)"
+
+    # Calculate file statistics
+    context_size = context_path.stat().st_size
+    file_count = len([line for line in tree_lines if not line.endswith('/')])
+
+    # Step 3: Detect project commands
     commands = detect_project_commands(project_root)
 
-    # Step 3: Generate target-specific instruction file
+    # Step 4: Generate target-specific instruction file
     if target == "claude":
         # Generate CLAUDE.md (markdown format)
         instruction_path = project_root / "CLAUDE.md"
@@ -1712,6 +1776,15 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 This is the project context serialized using the `{lens_name}` lens for optimal AI understanding.
 
 {commands_section}## Project Structure
+
+```
+{project_name}/
+{tree_str}
+```
+
+**Statistics:**
+- Files: {file_count}
+- Context size: {context_size:,} bytes ({context_size / 1024:.1f} KB)
 
 For the complete codebase context, see `CONTEXT.txt` in this directory.
 
@@ -1743,6 +1816,9 @@ Common commands for this project:
 
 """
 
+        # Format tree for plain text
+        tree_plain = "\n".join(f"  {line}" for line in tree_lines) if tree_lines else "  (empty project)"
+
         instruction_content = f"""SYSTEM INSTRUCTIONS FOR {project_name}
 
 You are an expert developer working on the {project_name} project.
@@ -1750,6 +1826,14 @@ You are an expert developer working on the {project_name} project.
 PROJECT OVERVIEW:
 This project has been serialized using pm_encoder with the '{lens_name}' lens for optimal AI understanding.
 {commands_section}
+PROJECT STRUCTURE:
+{project_name}/
+{tree_plain}
+
+STATISTICS:
+- Files: {file_count}
+- Context size: {context_size:,} bytes ({context_size / 1024:.1f} KB)
+
 CODEBASE CONTEXT:
 The complete project codebase is available in CONTEXT.txt in this same directory.
 Read CONTEXT.txt to understand the project structure, implementation details, and code patterns.
