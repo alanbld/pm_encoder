@@ -22,6 +22,22 @@ impl Config {
     }
 }
 
+/// Trait for processable items
+pub trait Processable {
+    fn process(&self) -> String;
+}
+
+impl Processable for Config {
+    fn process(&self) -> String {
+        format!("Processing config: {}", self.name)
+    }
+}
+
+/// Async handler example
+pub async fn async_handler(data: String) -> Result<String, String> {
+    Ok(format!("Handled: {}", data))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
