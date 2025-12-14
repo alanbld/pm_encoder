@@ -470,6 +470,106 @@ fn test_serial_05_newline_handling() {
 }
 
 // ============================================================================
+// Analyzer Tests (10 vectors) - Phase 2
+// ============================================================================
+
+#[test]
+#[ignore] // Requires analyzer implementation
+fn test_analyzer_01_python_class() {
+    let vector = load_vector("analyzer_01_python_class");
+    // TODO: Implement Python analyzer
+    // - Class detection
+    // - Metadata extraction
+    panic!("Not yet implemented - requires Python analyzer");
+}
+
+#[test]
+#[ignore] // Requires analyzer implementation
+fn test_analyzer_02_python_function() {
+    let vector = load_vector("analyzer_02_python_function");
+    // TODO: Implement Python analyzer
+    // - Function detection
+    // - Entry point detection (__main__)
+    panic!("Not yet implemented - requires Python analyzer");
+}
+
+#[test]
+#[ignore] // Requires analyzer implementation
+fn test_analyzer_03_python_imports() {
+    let vector = load_vector("analyzer_03_python_imports");
+    // TODO: Implement Python analyzer
+    // - Import detection (import x, from x import y)
+    panic!("Not yet implemented - requires Python analyzer");
+}
+
+#[test]
+#[ignore] // Requires analyzer implementation
+fn test_analyzer_04_javascript_function() {
+    let vector = load_vector("analyzer_04_javascript_function");
+    // TODO: Implement JavaScript analyzer
+    // - Function detection (function, arrow, async)
+    panic!("Not yet implemented - requires JavaScript analyzer");
+}
+
+#[test]
+#[ignore] // Requires analyzer implementation
+fn test_analyzer_05_javascript_imports() {
+    let vector = load_vector("analyzer_05_javascript_imports");
+    // TODO: Implement JavaScript analyzer
+    // - Import/require detection
+    panic!("Not yet implemented - requires JavaScript analyzer");
+}
+
+#[test]
+#[ignore] // Requires analyzer implementation
+fn test_analyzer_06_rust_struct() {
+    let vector = load_vector("analyzer_06_rust_struct");
+    // TODO: Implement Rust analyzer
+    // - Struct and enum detection
+    panic!("Not yet implemented - requires Rust analyzer");
+}
+
+#[test]
+#[ignore] // Requires analyzer implementation
+fn test_analyzer_07_rust_function() {
+    let vector = load_vector("analyzer_07_rust_function");
+    // TODO: Implement Rust analyzer
+    // - Function detection
+    // - Entry point detection (main)
+    panic!("Not yet implemented - requires Rust analyzer");
+}
+
+#[test]
+#[ignore] // Requires analyzer implementation
+fn test_analyzer_08_shell_functions() {
+    let vector = load_vector("analyzer_08_shell_functions");
+    // TODO: Implement Shell analyzer
+    // - Function detection
+    // - Shebang identification
+    panic!("Not yet implemented - requires Shell analyzer");
+}
+
+#[test]
+#[ignore] // Requires analyzer implementation
+fn test_analyzer_09_mixed_project() {
+    let vector = load_vector("analyzer_09_mixed_project");
+    // TODO: Implement multi-language analyzer
+    // - Multiple language detection
+    // - Correct analyzer routing
+    panic!("Not yet implemented - requires multi-language support");
+}
+
+#[test]
+#[ignore] // Requires analyzer implementation
+fn test_analyzer_10_structure_preservation() {
+    let vector = load_vector("analyzer_10_structure_preservation");
+    // TODO: Implement Python analyzer
+    // - Structure preservation
+    // - Metadata extraction (classes, functions, imports, markers)
+    panic!("Not yet implemented - requires Python analyzer");
+}
+
+// ============================================================================
 // Infrastructure Tests
 // ============================================================================
 
