@@ -70,6 +70,28 @@ def run_pm_encoder(temp_dir: Path, vector: Dict[str, Any]) -> str:
                 ignore_patterns = config_data.get('ignore_patterns', [])
                 include_patterns = config_data.get('include_patterns', [])
 
+        # Process CLI args (override config file)
+        cli_args = vector['input'].get('cli_args', [])
+        if cli_args:
+            i = 0
+            while i < len(cli_args):
+                arg = cli_args[i]
+                if arg == '--include':
+                    # Collect all include patterns until next flag or end
+                    include_patterns = []
+                    i += 1
+                    while i < len(cli_args) and not cli_args[i].startswith('--'):
+                        include_patterns.append(cli_args[i])
+                        i += 1
+                elif arg == '--exclude':
+                    # Collect all exclude patterns until next flag or end
+                    i += 1
+                    while i < len(cli_args) and not cli_args[i].startswith('--'):
+                        ignore_patterns.append(cli_args[i])
+                        i += 1
+                else:
+                    i += 1
+
         # Create output stream
         output_stream = StringIO()
 

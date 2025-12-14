@@ -10,12 +10,21 @@
       "README.md": "# docs"
     },
     "config": {},
-    "cli_args": ["--include", "*.rs", "*.md"]
+    "cli_args": [
+      "--include",
+      "*.rs",
+      "*.md"
+    ]
   },
   "expected": {
     "output_format": "plus_minus",
-    "files_included": ["test.rs", "README.md"],
-    "files_excluded": ["main.py"],
+    "files_included": [
+      "test.rs",
+      "README.md"
+    ],
+    "files_excluded": [
+      "main.py"
+    ],
     "output_contains": [
       "++++++++++ test.rs ++++++++++",
       "++++++++++ README.md ++++++++++"
@@ -25,7 +34,7 @@
       "cli_override": true
     }
   },
-  "python_validated": false,
+  "python_validated": true,
   "rust_status": "blocked",
   "notes": "Requires CLI argument support in validation script. Test vector is correct but validation infrastructure doesn't support cli_args yet."
 }

@@ -1331,15 +1331,34 @@ def serialize(
         for item in sorted_items:
             relative_path = item.relative_to(project_root)
 
-            if any(fnmatch(part, pattern) for part in relative_path.parts for pattern in ignore_patterns):
-                if item.is_dir():
-                    print(f"[SKIP DIR] {relative_path.as_posix()} (matches ignore pattern)", file=sys.stderr)
+            # Check if this path is explicitly included
+            is_explicitly_included = include_patterns and any(
+                fnmatch(relative_path.as_posix(), pattern) for pattern in include_patterns
+            )
+
+            # For files: if explicitly included, add to files_to_process regardless of ignore patterns
+            if item.is_file() and is_explicitly_included:
+                files_to_process.append(item)
+                print(f"[KEEP] {relative_path.as_posix()} (explicitly included)", file=sys.stderr)
                 continue
 
+            # Check ignore patterns (only applies if not explicitly included)
+            is_ignored = any(fnmatch(part, pattern) for part in relative_path.parts for pattern in ignore_patterns)
+            if is_ignored:
+                if item.is_dir():
+                    print(f"[SKIP DIR] {relative_path.as_posix()} (matches ignore pattern)", file=sys.stderr)
+                # For files, skip silently if ignored
+                continue
+
+            # Process directories and remaining files
             if item.is_dir():
                 collect_files(item)
             elif item.is_file():
-                if include_patterns and not any(fnmatch(relative_path.as_posix(), pattern) for pattern in include_patterns):
+                # Whitelist behavior: if include_patterns exist but no ignore_patterns, only include matched files
+                # Override behavior: if both exist, include_patterns override ignore_patterns for matched files
+                # When both exist, non-matching, non-ignored files are still included
+                if include_patterns and not is_explicitly_included and not ignore_patterns:
+                    # Pure whitelist: only include explicitly matched files
                     continue
                 files_to_process.append(item)
 

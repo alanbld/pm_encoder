@@ -14,8 +14,13 @@
   },
   "expected": {
     "output_format": "plus_minus",
-    "files_included": ["important.tmp", "main.py"],
-    "files_excluded": ["garbage.tmp"],
+    "files_included": [
+      "important.tmp",
+      "main.py"
+    ],
+    "files_excluded": [
+      "garbage.tmp"
+    ],
     "output_contains": [
       "++++++++++ important.tmp ++++++++++",
       "keep this"
@@ -25,7 +30,7 @@
       "precedence_tested": true
     }
   },
-  "python_validated": false,
+  "python_validated": true,
   "rust_status": "blocked",
   "notes": "Reveals implementation bug: Python implementation checks ignore_patterns before include_patterns, so include patterns cannot override ignore patterns. This needs to be fixed in pm_encoder.py serialize() function around line 1334-1344."
 }
