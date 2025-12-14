@@ -14,7 +14,12 @@
   },
   "expected": {
     "output_format": "plus_minus",
-    "files_included": ["README.md", "app.py", "lib.rs", "server.js"],
+    "files_included": [
+      "README.md",
+      "app.py",
+      "lib.rs",
+      "server.js"
+    ],
     "files_excluded": [],
     "output_contains": [
       "++++++++++ README.md ++++++++++",
@@ -29,10 +34,15 @@
     ],
     "metadata": {
       "file_count": 4,
-      "languages": ["Python", "JavaScript", "Rust", "Markdown"],
+      "languages": [
+        "Python",
+        "JavaScript",
+        "Rust",
+        "Markdown"
+      ],
       "multi_language": true
     }
   },
-  "python_validated": false,
+  "python_validated": true,
   "rust_status": "pending"
 }

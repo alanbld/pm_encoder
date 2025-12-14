@@ -11,7 +11,9 @@
   },
   "expected": {
     "output_format": "plus_minus",
-    "files_included": ["index.js"],
+    "files_included": [
+      "index.js"
+    ],
     "files_excluded": [],
     "output_contains": [
       "++++++++++ index.js ++++++++++",
@@ -23,9 +25,15 @@
     "metadata": {
       "file_count": 1,
       "language": "JavaScript",
-      "imports_detected": ["express", "Router", "React", "useState", "useEffect"]
+      "imports_detected": [
+        "express",
+        "Router",
+        "React",
+        "useState",
+        "useEffect"
+      ]
     }
   },
-  "python_validated": false,
+  "python_validated": true,
   "rust_status": "pending"
 }

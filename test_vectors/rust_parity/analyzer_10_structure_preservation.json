@@ -11,7 +11,9 @@
   },
   "expected": {
     "output_format": "plus_minus",
-    "files_included": ["service.py"],
+    "files_included": [
+      "service.py"
+    ],
     "files_excluded": [],
     "output_contains": [
       "++++++++++ service.py ++++++++++",
@@ -27,14 +29,25 @@
     "metadata": {
       "file_count": 1,
       "language": "Python",
-      "classes_detected": ["UserService"],
-      "functions_detected": ["__init__", "create_user", "delete_user"],
-      "imports_detected": ["logging", "Optional"],
+      "classes_detected": [
+        "UserService"
+      ],
+      "functions_detected": [
+        "__init__",
+        "create_user",
+        "delete_user"
+      ],
+      "imports_detected": [
+        "logging",
+        "Optional"
+      ],
       "has_docstrings": true,
-      "markers_detected": ["TODO"],
+      "markers_detected": [
+        "TODO"
+      ],
       "category": "library"
     }
   },
-  "python_validated": false,
+  "python_validated": true,
   "rust_status": "pending"
 }

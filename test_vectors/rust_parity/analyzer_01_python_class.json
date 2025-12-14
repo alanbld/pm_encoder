@@ -11,7 +11,9 @@
   },
   "expected": {
     "output_format": "plus_minus",
-    "files_included": ["models.py"],
+    "files_included": [
+      "models.py"
+    ],
     "files_excluded": [],
     "output_contains": [
       "++++++++++ models.py ++++++++++",
@@ -22,11 +24,15 @@
     "metadata": {
       "file_count": 1,
       "language": "Python",
-      "classes_detected": ["User", "Product", "Order"],
+      "classes_detected": [
+        "User",
+        "Product",
+        "Order"
+      ],
       "has_docstrings": true,
       "category": "library"
     }
   },
-  "python_validated": false,
+  "python_validated": true,
   "rust_status": "pending"
 }

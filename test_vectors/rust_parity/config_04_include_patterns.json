@@ -4,7 +4,7 @@
   "category": "config",
   "input": {
     "files": {
-      ".pm_encoder_config.json": "{\n  \"include_patterns\": [\"src/**/*.rs\", \"Cargo.toml\"]\n}",
+      ".pm_encoder_config.json": "{\n  \"include_patterns\": [\"src/*.rs\", \"Cargo.toml\", \".pm_encoder_config.json\"]\n}",
       "src/main.rs": "fn main() {}",
       "src/lib.rs": "pub mod foo;",
       "Cargo.toml": "[package]",
@@ -16,10 +16,18 @@
   },
   "expected": {
     "output_format": "plus_minus",
-    "files_included": ["src/main.rs", "src/lib.rs", "Cargo.toml"],
-    "files_excluded": ["README.md", "test.py"],
+    "files_included": [
+      ".pm_encoder_config.json",
+      "src/main.rs",
+      "src/lib.rs",
+      "Cargo.toml"
+    ],
+    "files_excluded": [
+      "README.md",
+      "test.py"
+    ],
     "metadata": {
-      "file_count": 3,
+      "file_count": 4,
       "include_filter_active": true
     }
   },

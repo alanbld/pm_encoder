@@ -11,7 +11,9 @@
   },
   "expected": {
     "output_format": "plus_minus",
-    "files_included": ["README.md"],
+    "files_included": [
+      "README.md"
+    ],
     "files_excluded": [],
     "output_contains": [
       "++++++++++ README.md ++++++++++",

@@ -11,7 +11,9 @@
   },
   "expected": {
     "output_format": "plus_minus",
-    "files_included": ["main.rs"],
+    "files_included": [
+      "main.rs"
+    ],
     "files_excluded": [],
     "output_contains": [
       "++++++++++ main.rs ++++++++++",
@@ -22,11 +24,17 @@
     "metadata": {
       "file_count": 1,
       "language": "Rust",
-      "functions_detected": ["calculate", "process_data", "main"],
-      "entry_points": ["main"],
+      "functions_detected": [
+        "calculate",
+        "process_data",
+        "main"
+      ],
+      "entry_points": [
+        "main"
+      ],
       "category": "application"
     }
   },
-  "python_validated": false,
+  "python_validated": true,
   "rust_status": "pending"
 }

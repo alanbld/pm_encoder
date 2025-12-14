@@ -14,8 +14,14 @@
   },
   "expected": {
     "output_format": "plus_minus",
-    "files_included": [".pm_encoder_config.json", "main.py"],
-    "files_excluded": [".git/config", "test.pyc"],
+    "files_included": [
+      ".pm_encoder_config.json",
+      "main.py"
+    ],
+    "files_excluded": [
+      ".git/config",
+      "test.pyc"
+    ],
     "output_contains": [
       "++++++++++ .pm_encoder_config.json ++++++++++",
       "++++++++++ main.py ++++++++++",

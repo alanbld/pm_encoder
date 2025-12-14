@@ -25,6 +25,7 @@
       "cli_override": true
     }
   },
-  "python_validated": true,
-  "rust_status": "pending"
+  "python_validated": false,
+  "rust_status": "blocked",
+  "notes": "Requires CLI argument support in validation script. Test vector is correct but validation infrastructure doesn't support cli_args yet."
 }

@@ -11,7 +11,9 @@
   },
   "expected": {
     "output_format": "plus_minus",
-    "files_included": ["app.py"],
+    "files_included": [
+      "app.py"
+    ],
     "files_excluded": [],
     "output_contains": [
       "++++++++++ app.py ++++++++++",
@@ -24,10 +26,17 @@
     "metadata": {
       "file_count": 1,
       "language": "Python",
-      "imports_detected": ["os", "sys", "Path", "json"],
-      "functions_detected": ["main"]
+      "imports_detected": [
+        "os",
+        "sys",
+        "Path",
+        "json"
+      ],
+      "functions_detected": [
+        "main"
+      ]
     }
   },
-  "python_validated": false,
+  "python_validated": true,
   "rust_status": "pending"
 }

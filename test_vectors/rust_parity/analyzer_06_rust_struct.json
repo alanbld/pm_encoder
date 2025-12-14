@@ -11,7 +11,9 @@
   },
   "expected": {
     "output_format": "plus_minus",
-    "files_included": ["types.rs"],
+    "files_included": [
+      "types.rs"
+    ],
     "files_excluded": [],
     "output_contains": [
       "++++++++++ types.rs ++++++++++",
@@ -22,10 +24,15 @@
     "metadata": {
       "file_count": 1,
       "language": "Rust",
-      "structs_detected": ["User", "Config"],
-      "enums_detected": ["Status"]
+      "structs_detected": [
+        "User",
+        "Config"
+      ],
+      "enums_detected": [
+        "Status"
+      ]
     }
   },
-  "python_validated": false,
+  "python_validated": true,
   "rust_status": "pending"
 }

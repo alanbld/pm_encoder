@@ -11,7 +11,9 @@
   },
   "expected": {
     "output_format": "plus_minus",
-    "files_included": ["deploy.sh"],
+    "files_included": [
+      "deploy.sh"
+    ],
     "files_excluded": [],
     "output_contains": [
       "++++++++++ deploy.sh ++++++++++",
@@ -23,10 +25,14 @@
     "metadata": {
       "file_count": 1,
       "language": "Shell",
-      "functions_detected": ["setup_env", "deploy", "cleanup"],
+      "functions_detected": [
+        "setup_env",
+        "deploy",
+        "cleanup"
+      ],
       "has_shebang": true
     }
   },
-  "python_validated": false,
+  "python_validated": true,
   "rust_status": "pending"
 }

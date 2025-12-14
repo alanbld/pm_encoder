@@ -11,7 +11,9 @@
   },
   "expected": {
     "output_format": "plus_minus",
-    "files_included": ["api.js"],
+    "files_included": [
+      "api.js"
+    ],
     "files_excluded": [],
     "output_contains": [
       "++++++++++ api.js ++++++++++",
@@ -22,9 +24,13 @@
     "metadata": {
       "file_count": 1,
       "language": "JavaScript",
-      "functions_detected": ["fetchData", "processData", "saveData"]
+      "functions_detected": [
+        "fetchData",
+        "processData",
+        "saveData"
+      ]
     }
   },
-  "python_validated": false,
+  "python_validated": true,
   "rust_status": "pending"
 }

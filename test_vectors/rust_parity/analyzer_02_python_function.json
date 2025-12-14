@@ -11,7 +11,9 @@
   },
   "expected": {
     "output_format": "plus_minus",
-    "files_included": ["utils.py"],
+    "files_included": [
+      "utils.py"
+    ],
     "files_excluded": [],
     "output_contains": [
       "++++++++++ utils.py ++++++++++",
@@ -22,11 +24,16 @@
     "metadata": {
       "file_count": 1,
       "language": "Python",
-      "functions_detected": ["calculate_total", "format_output"],
-      "entry_points": ["__main__ block"],
+      "functions_detected": [
+        "calculate_total",
+        "format_output"
+      ],
+      "entry_points": [
+        "__main__ block"
+      ],
       "category": "application"
     }
   },
-  "python_validated": false,
+  "python_validated": true,
   "rust_status": "pending"
 }

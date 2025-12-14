@@ -14,7 +14,12 @@
   },
   "expected": {
     "output_format": "plus_minus",
-    "files_included": ["alpha.txt", "beta.txt", "dir/charlie.txt", "zebra.txt"],
+    "files_included": [
+      "alpha.txt",
+      "beta.txt",
+      "dir/charlie.txt",
+      "zebra.txt"
+    ],
     "files_excluded": [],
     "output_contains": [
       "++++++++++ alpha.txt ++++++++++",
@@ -22,7 +27,12 @@
       "++++++++++ dir/charlie.txt ++++++++++",
       "++++++++++ zebra.txt ++++++++++"
     ],
-    "sort_order": ["alpha.txt", "beta.txt", "dir/charlie.txt", "zebra.txt"],
+    "sort_order": [
+      "alpha.txt",
+      "beta.txt",
+      "dir/charlie.txt",
+      "zebra.txt"
+    ],
     "metadata": {
       "file_count": 4,
       "sort_mode": "name_ascending",
