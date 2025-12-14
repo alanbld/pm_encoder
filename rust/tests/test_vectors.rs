@@ -521,22 +521,93 @@ fn test_analyzer_05_javascript_imports() {
 }
 
 #[test]
-#[ignore] // Requires analyzer implementation
 fn test_analyzer_06_rust_struct() {
     let vector = load_vector("analyzer_06_rust_struct");
-    // TODO: Implement Rust analyzer
-    // - Struct and enum detection
-    panic!("Not yet implemented - requires Rust analyzer");
+    assert!(vector.python_validated, "Vector not validated by Python");
+
+    // Create temp directory with test files
+    let temp_dir = std::env::temp_dir().join(format!("pm_encoder_test_{}", vector.name));
+    let _ = fs::remove_dir_all(&temp_dir);
+    fs::create_dir_all(&temp_dir).expect("Failed to create temp dir");
+
+    // Write test files
+    for (file_path, content) in &vector.input.files {
+        let full_path = temp_dir.join(file_path);
+        if let Some(parent) = full_path.parent() {
+            fs::create_dir_all(parent).expect("Failed to create parent dir");
+        }
+        fs::write(&full_path, content).expect("Failed to write test file");
+    }
+
+    // Run serialization
+    let output = pm_encoder::serialize_project(temp_dir.to_str().unwrap())
+        .expect("Serialization failed");
+
+    // Check that expected files are included
+    for file in &vector.expected.files_included {
+        assert!(
+            output.contains(&format!("++++++++++ {} ++++++++++", file)),
+            "Output should contain file: {}",
+            file
+        );
+    }
+
+    // Check for specific content strings
+    for content_str in &vector.expected.output_contains {
+        assert!(
+            output.contains(content_str),
+            "Output should contain: {}",
+            content_str
+        );
+    }
+
+    // Clean up
+    let _ = fs::remove_dir_all(&temp_dir);
 }
 
 #[test]
-#[ignore] // Requires analyzer implementation
 fn test_analyzer_07_rust_function() {
     let vector = load_vector("analyzer_07_rust_function");
-    // TODO: Implement Rust analyzer
-    // - Function detection
-    // - Entry point detection (main)
-    panic!("Not yet implemented - requires Rust analyzer");
+    assert!(vector.python_validated, "Vector not validated by Python");
+
+    // Create temp directory with test files
+    let temp_dir = std::env::temp_dir().join(format!("pm_encoder_test_{}", vector.name));
+    let _ = fs::remove_dir_all(&temp_dir);
+    fs::create_dir_all(&temp_dir).expect("Failed to create temp dir");
+
+    // Write test files
+    for (file_path, content) in &vector.input.files {
+        let full_path = temp_dir.join(file_path);
+        if let Some(parent) = full_path.parent() {
+            fs::create_dir_all(parent).expect("Failed to create parent dir");
+        }
+        fs::write(&full_path, content).expect("Failed to write test file");
+    }
+
+    // Run serialization
+    let output = pm_encoder::serialize_project(temp_dir.to_str().unwrap())
+        .expect("Serialization failed");
+
+    // Check that expected files are included
+    for file in &vector.expected.files_included {
+        assert!(
+            output.contains(&format!("++++++++++ {} ++++++++++", file)),
+            "Output should contain file: {}",
+            file
+        );
+    }
+
+    // Check for specific content strings
+    for content_str in &vector.expected.output_contains {
+        assert!(
+            output.contains(content_str),
+            "Output should contain: {}",
+            content_str
+        );
+    }
+
+    // Clean up
+    let _ = fs::remove_dir_all(&temp_dir);
 }
 
 #[test]

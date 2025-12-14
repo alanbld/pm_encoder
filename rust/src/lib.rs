@@ -21,6 +21,8 @@ use std::path::Path;
 use serde::{Deserialize, Serialize};
 use globset::Glob;
 
+pub mod analyzers;
+
 /// A file entry with its content and metadata
 #[derive(Debug, Clone)]
 pub struct FileEntry {
