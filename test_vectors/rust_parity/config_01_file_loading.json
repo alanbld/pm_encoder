@@ -1,0 +1,32 @@
+{
+  "name": "config_01_file_loading",
+  "description": "Load .pm_encoder_config.json and apply patterns",
+  "category": "config",
+  "input": {
+    "files": {
+      ".pm_encoder_config.json": "{\n  \"ignore_patterns\": [\".git\", \"*.pyc\"],\n  \"include_patterns\": []\n}",
+      "main.py": "print('hello')",
+      ".git/config": "ignored",
+      "test.pyc": "ignored"
+    },
+    "config": {},
+    "cli_args": []
+  },
+  "expected": {
+    "output_format": "plus_minus",
+    "files_included": [".pm_encoder_config.json", "main.py"],
+    "files_excluded": [".git/config", "test.pyc"],
+    "output_contains": [
+      "++++++++++ .pm_encoder_config.json ++++++++++",
+      "++++++++++ main.py ++++++++++",
+      "print('hello')"
+    ],
+    "metadata": {
+      "file_count": 2,
+      "config_loaded": true,
+      "patterns_applied": true
+    }
+  },
+  "python_validated": true,
+  "rust_status": "pending"
+}

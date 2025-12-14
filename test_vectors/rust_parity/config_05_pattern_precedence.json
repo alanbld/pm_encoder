@@ -1,0 +1,30 @@
+{
+  "name": "config_05_pattern_precedence",
+  "description": "Include patterns take precedence over ignore",
+  "category": "config",
+  "input": {
+    "files": {
+      ".pm_encoder_config.json": "{\n  \"ignore_patterns\": [\"*.tmp\"],\n  \"include_patterns\": [\"important.tmp\"]\n}",
+      "important.tmp": "keep this",
+      "garbage.tmp": "ignore this",
+      "main.py": "normal file"
+    },
+    "config": {},
+    "cli_args": []
+  },
+  "expected": {
+    "output_format": "plus_minus",
+    "files_included": ["important.tmp", "main.py"],
+    "files_excluded": ["garbage.tmp"],
+    "output_contains": [
+      "++++++++++ important.tmp ++++++++++",
+      "keep this"
+    ],
+    "metadata": {
+      "file_count": 2,
+      "precedence_tested": true
+    }
+  },
+  "python_validated": true,
+  "rust_status": "pending"
+}

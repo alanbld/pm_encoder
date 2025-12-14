@@ -1,0 +1,30 @@
+{
+  "name": "config_02_cli_override",
+  "description": "CLI --include overrides config file",
+  "category": "config",
+  "input": {
+    "files": {
+      ".pm_encoder_config.json": "{\n  \"include_patterns\": [\"*.py\"]\n}",
+      "main.py": "# python",
+      "test.rs": "// rust",
+      "README.md": "# docs"
+    },
+    "config": {},
+    "cli_args": ["--include", "*.rs", "*.md"]
+  },
+  "expected": {
+    "output_format": "plus_minus",
+    "files_included": ["test.rs", "README.md"],
+    "files_excluded": ["main.py"],
+    "output_contains": [
+      "++++++++++ test.rs ++++++++++",
+      "++++++++++ README.md ++++++++++"
+    ],
+    "metadata": {
+      "file_count": 2,
+      "cli_override": true
+    }
+  },
+  "python_validated": true,
+  "rust_status": "pending"
+}

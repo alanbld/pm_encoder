@@ -1,0 +1,28 @@
+{
+  "name": "config_04_include_patterns",
+  "description": "Include patterns filter files positively",
+  "category": "config",
+  "input": {
+    "files": {
+      ".pm_encoder_config.json": "{\n  \"include_patterns\": [\"src/**/*.rs\", \"Cargo.toml\"]\n}",
+      "src/main.rs": "fn main() {}",
+      "src/lib.rs": "pub mod foo;",
+      "Cargo.toml": "[package]",
+      "README.md": "excluded",
+      "test.py": "excluded"
+    },
+    "config": {},
+    "cli_args": []
+  },
+  "expected": {
+    "output_format": "plus_minus",
+    "files_included": ["src/main.rs", "src/lib.rs", "Cargo.toml"],
+    "files_excluded": ["README.md", "test.py"],
+    "metadata": {
+      "file_count": 3,
+      "include_filter_active": true
+    }
+  },
+  "python_validated": true,
+  "rust_status": "pending"
+}

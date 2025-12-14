@@ -1,0 +1,28 @@
+{
+  "name": "config_03_ignore_patterns",
+  "description": "Multiple ignore patterns work correctly",
+  "category": "config",
+  "input": {
+    "files": {
+      ".pm_encoder_config.json": "{\n  \"ignore_patterns\": [\"*.log\", \"temp/**\", \"*.tmp\"]\n}",
+      "main.py": "code",
+      "debug.log": "ignored",
+      "temp/cache.db": "ignored",
+      "data.tmp": "ignored",
+      "important.txt": "kept"
+    },
+    "config": {},
+    "cli_args": []
+  },
+  "expected": {
+    "output_format": "plus_minus",
+    "files_included": [".pm_encoder_config.json", "main.py", "important.txt"],
+    "files_excluded": ["debug.log", "temp/cache.db", "data.tmp"],
+    "metadata": {
+      "file_count": 3,
+      "ignored_count": 3
+    }
+  },
+  "python_validated": true,
+  "rust_status": "pending"
+}
