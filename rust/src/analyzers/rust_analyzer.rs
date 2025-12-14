@@ -78,7 +78,7 @@ impl RustAnalyzer {
 
             // Markers (TODO, FIXME, etc.)
             if let Some(caps) = MARKER_PATTERN.captures(line) {
-                if let (Some(marker_type), Some(marker_text)) = (caps.get(1), caps.get(2)) {
+                if let (Some(marker_type), Some(_marker_text)) = (caps.get(1), caps.get(2)) {
                     markers.push(format!("{} (line {})", marker_type.as_str(), line_num));
                 }
             }
