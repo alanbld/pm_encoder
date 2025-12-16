@@ -119,13 +119,108 @@ fn test_config_01_file_loading() {
 }
 
 #[test]
-#[ignore] // Requires CLI parsing
 fn test_config_02_cli_override() {
     let vector = load_vector("config_02_cli_override");
-    assert!(vector.python_validated);
-    // TODO: Implement CLI argument parsing
-    // This test requires --include CLI flag support
-    panic!("Not yet implemented - requires CLI parsing");
+    assert!(vector.python_validated, "Vector not validated by Python");
+
+    // Create temp directory with test files
+    let temp_dir = std::env::temp_dir().join(format!("pm_encoder_test_{}", vector.name));
+    let _ = fs::remove_dir_all(&temp_dir);
+    fs::create_dir_all(&temp_dir).expect("Failed to create temp dir");
+
+    // Write test files
+    for (file_path, content) in &vector.input.files {
+        let full_path = temp_dir.join(file_path);
+        if let Some(parent) = full_path.parent() {
+            fs::create_dir_all(parent).expect("Failed to create parent dir");
+        }
+        fs::write(&full_path, content).expect("Failed to write test file");
+    }
+
+    // Start with default config (which loads .pm_encoder_config.json from temp_dir)
+    let config_path = temp_dir.join(".pm_encoder_config.json");
+    let mut config = if config_path.exists() {
+        pm_encoder::EncoderConfig::from_file(&config_path).unwrap_or_default()
+    } else {
+        pm_encoder::EncoderConfig::default()
+    };
+
+    // Apply CLI argument overrides
+    // Parse cli_args to extract --include, --exclude, --sort-by, --sort-order
+    let cli_args = &vector.input.cli_args;
+    let mut i = 0;
+    while i < cli_args.len() {
+        match cli_args[i].as_str() {
+            "--include" => {
+                // Collect all subsequent args until next flag or end
+                config.include_patterns.clear(); // CLI overrides config
+                i += 1;
+                while i < cli_args.len() && !cli_args[i].starts_with("--") {
+                    config.include_patterns.push(cli_args[i].clone());
+                    i += 1;
+                }
+            }
+            "--exclude" => {
+                // Extend ignore patterns (CLI adds to config)
+                i += 1;
+                while i < cli_args.len() && !cli_args[i].starts_with("--") {
+                    config.ignore_patterns.push(cli_args[i].clone());
+                    i += 1;
+                }
+            }
+            "--sort-by" => {
+                i += 1;
+                if i < cli_args.len() {
+                    config.sort_by = cli_args[i].clone();
+                    i += 1;
+                }
+            }
+            "--sort-order" => {
+                i += 1;
+                if i < cli_args.len() {
+                    config.sort_order = cli_args[i].clone();
+                    i += 1;
+                }
+            }
+            _ => {
+                i += 1;
+            }
+        }
+    }
+
+    // Run serialization with the modified config
+    let output = pm_encoder::serialize_project_with_config(temp_dir.to_str().unwrap(), &config)
+        .expect("Serialization failed");
+
+    // Check that expected files are included
+    for file in &vector.expected.files_included {
+        assert!(
+            output.contains(&format!("++++++++++ {} ++++++++++", file)),
+            "Output should contain file: {}",
+            file
+        );
+    }
+
+    // Check that expected files are excluded
+    for file in &vector.expected.files_excluded {
+        assert!(
+            !output.contains(&format!("++++++++++ {} ++++++++++", file)),
+            "Output should NOT contain file: {}",
+            file
+        );
+    }
+
+    // Check for specific content strings
+    for content_str in &vector.expected.output_contains {
+        assert!(
+            output.contains(content_str),
+            "Output should contain: {}",
+            content_str
+        );
+    }
+
+    // Clean up
+    let _ = fs::remove_dir_all(&temp_dir);
 }
 
 #[test]

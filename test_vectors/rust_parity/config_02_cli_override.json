@@ -35,6 +35,6 @@
     }
   },
   "python_validated": true,
-  "rust_status": "blocked",
-  "notes": "Requires CLI argument support in validation script. Test vector is correct but validation infrastructure doesn't support cli_args yet."
+  "rust_status": "passing",
+  "notes": "CLI argument simulation implemented in test harness. --include overrides config file include_patterns."
 }
