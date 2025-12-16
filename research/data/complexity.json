@@ -1,0 +1,100 @@
+{
+  "metadata": {
+    "tool": "lizard",
+    "version": "1.19.0",
+    "description": "Complexity analysis for pm_encoder Research Phase 3"
+  },
+  "python": {
+    "engine": "Python",
+    "total_nloc": 1257,
+    "total_tokens": 9285,
+    "total_functions": 50,
+    "avg_ccn": 6.72,
+    "max_ccn": 22,
+    "max_ccn_function": "pm_encoder.py::analyze_lines",
+    "semantic_density": 7.39,
+    "files": [
+      {
+        "path": "pm_encoder.py",
+        "nloc": 1257,
+        "token_count": 9285,
+        "function_count": 50,
+        "avg_ccn": 6.72,
+        "max_ccn": 22,
+        "max_ccn_function": "analyze_lines"
+      }
+    ]
+  },
+  "rust": {
+    "engine": "Rust",
+    "total_nloc": 1497,
+    "total_tokens": 10317,
+    "total_functions": 76,
+    "avg_ccn": 3.33,
+    "max_ccn": 35,
+    "max_ccn_function": "rust/src/lib.rs::truncate_structure",
+    "semantic_density": 6.89,
+    "files": [
+      {
+        "path": "rust/src/lib.rs",
+        "nloc": 663,
+        "token_count": 4410,
+        "function_count": 31,
+        "avg_ccn": 4.42,
+        "max_ccn": 35,
+        "max_ccn_function": "truncate_structure"
+      },
+      {
+        "path": "rust/src/lenses.rs",
+        "nloc": 224,
+        "token_count": 1628,
+        "function_count": 12,
+        "avg_ccn": 2.08,
+        "max_ccn": 8,
+        "max_ccn_function": "print_manifest"
+      },
+      {
+        "path": "rust/src/analyzers/mod.rs",
+        "nloc": 58,
+        "token_count": 462,
+        "function_count": 2,
+        "avg_ccn": 2.5,
+        "max_ccn": 4,
+        "max_ccn_function": "get_analyzer_for_file"
+      },
+      {
+        "path": "rust/src/analyzers/generic.rs",
+        "nloc": 244,
+        "token_count": 2020,
+        "function_count": 22,
+        "avg_ccn": 2.0,
+        "max_ccn": 22,
+        "max_ccn_function": "analyze_lines"
+      },
+      {
+        "path": "rust/src/analyzers/rust_analyzer.rs",
+        "nloc": 125,
+        "token_count": 1112,
+        "function_count": 8,
+        "avg_ccn": 3.12,
+        "max_ccn": 18,
+        "max_ccn_function": "analyze_lines"
+      },
+      {
+        "path": "rust/src/bin/main.rs",
+        "nloc": 183,
+        "token_count": 685,
+        "function_count": 1,
+        "avg_ccn": 17.0,
+        "max_ccn": 17,
+        "max_ccn_function": "main"
+      }
+    ]
+  },
+  "comparison": {
+    "nloc_ratio": 1.1909307875894988,
+    "token_ratio": 1.1111470113085622,
+    "density_diff": -0.5,
+    "ccn_diff": -3.3899999999999997
+  }
+}

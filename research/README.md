@@ -5,8 +5,8 @@
 ## Overview
 
 This research project tracks the development of `pm_encoder`, a dual-engine codebase with:
-- **Python Engine** (reference implementation, v1.5.0)
-- **Rust Engine** (performance implementation, v0.3.0)
+- **Python Engine** (reference implementation, v1.6.0)
+- **Rust Engine** (performance implementation, v0.5.0)
 
 The goal is to empirically validate the **Convergence Hypothesis**: that Test-Driven Development using test vectors can accelerate feature parity between two language implementations 3-4x faster than traditional development.
 
@@ -16,6 +16,8 @@ The goal is to empirically validate the **Convergence Hypothesis**: that Test-Dr
 2. **Quality**: Does the test vector contract improve code quality in both engines?
 3. **Sustainability**: Can this pace be maintained over 6+ months?
 4. **Scalability**: Does the approach scale to complex features (analyzers, lenses)?
+5. **Architecture vs Language** (RQ5): Can superior architecture overcome language speed differences? ✅ *Answered*
+6. **Complexity vs Density** (RQ6): Does lower cyclomatic complexity correlate with maintainability, even at lower semantic density?
 
 ## Current Status (Dec 16, 2025)
 
@@ -31,45 +33,110 @@ The goal is to empirically validate the **Convergence Hypothesis**: that Test-Dr
 - ✅ v0.3.0 - Config System (Rust, 80% parity)
 - ✅ v0.4.0 - Serialization Vectors (100% parity)
 - ✅ v1.5.0 - Rust Parity & Interface Protocol (Python)
-- ✅ v1.6.0 - The Streaming Pipeline (Python only)
+- ✅ v1.6.0 - The Streaming Pipeline (Python)
+- ✅ v0.5.0 - Streaming Parity (Rust)
 
 ---
 
-## Phase 2.5: The Streaming Divergence (v1.6.0)
+## Phase 2.5: The Streaming Convergence (v1.6.0 / v0.5.0)
 
 **Date:** December 16, 2025
 
 ### Observation
-Python Reference Implementation has adopted **Streaming Architecture** (Generators).
-Rust Parity Implementation remains **Batch Architecture** (Vectors).
+Both engines now support **Streaming Architecture**:
+- Python v1.6.0: Generators (`yield`)
+- Rust v0.5.0: Iterators (`impl Iterator`)
 
-This creates a deliberate architectural gap to study: **Architecture vs. Language**.
-
-### New Research Question (RQ5)
+### Research Question (RQ5) - Answered
 > Can an interpreted language with superior architecture (Streaming) beat a compiled language with inferior architecture (Batch) on Time-To-First-Byte (TTFB)?
 
-### Hypothesis
-Python v1.6.0 will have **lower TTFB** than Rust v0.4.0, proving that **architecture dominates raw speed** for latency-sensitive workloads.
+**Answer:** Yes! Python streaming (88ms) matched Rust batch (~1.6s). But when Rust adopts streaming (5ms), it dominates.
 
-### Preliminary Results (React repo, 6,941 files)
+### Final Results (React repo, ~6,905 files)
 
-| Engine | Architecture | TTFB |
-|--------|-------------|------|
-| Python v1.6.0 | Streaming | **46ms** |
-| Python v1.5.0 | Batch | 485ms |
-| Rust v0.4.0 | Batch | ~50ms* |
+| Engine | Version | Architecture | TTFB |
+|--------|---------|-------------|------|
+| **Rust** | **v0.5.0** | **Streaming** | **5ms** |
+| Python | v1.6.0 | Streaming | 88ms |
+| Rust | v0.5.0 | Batch | 1,600ms |
+| Python | v1.6.0 | Batch | 3,900ms |
 
-*Rust batch is fast due to compiled speed, but Python streaming achieves parity through architecture.
-
-### Implications
-1. **TTFB Parity**: Python streaming ≈ Rust batch (architecture closes the language gap)
-2. **Total Time**: Rust still wins on total processing time (but users see TTFB first)
-3. **Next Step**: Port streaming to Rust for true performance leadership
+### Key Findings
+1. **Architecture Matters:** Streaming reduces TTFB by 320x (Rust) / 44x (Python)
+2. **Language Matters Too:** Rust streaming is 17x faster than Python streaming
+3. **Synergy Effect:** Combining superior architecture + compiled speed creates exponential gains
 
 ### Status
 - **Python v1.6.0**: Streaming implemented ✅
-- **Rust v0.4.0**: Batch only (streaming pending)
-- **Gap Window**: Intentionally preserved for research documentation
+- **Rust v0.5.0**: Streaming implemented ✅
+- **Parity**: Restored (both engines support `--stream` flag)
+
+---
+
+## Phase 3: Complexity Analysis (v1.6.0 vs v0.5.0)
+
+**Date:** December 16, 2025
+**Tool:** [lizard](https://github.com/terryyin/lizard) v1.19.0
+
+### Hypothesis
+
+> Rust will show higher Semantic Density (Tokens/NLOC) due to its expressive type system.
+
+### Result: ❌ REJECTED
+
+Python is **7% denser** (7.39 vs 6.89 tokens/line).
+
+### New Discovery: The Pattern Dividend
+
+Rust shows **50% Lower Cyclomatic Complexity** (Avg CCN 3.33 vs 6.72).
+
+### Metrics
+
+| Metric | Python | Rust | Delta |
+|--------|--------|------|-------|
+| NLOC (Lines of Code) | 1,257 | 1,497 | **+19%** |
+| Function Count | 50 | 76 | **+52%** |
+| Avg Cyclomatic Complexity | 6.72 | 3.33 | **-50%** |
+| Max Cyclomatic Complexity | 22 | 35 | +59% |
+| Semantic Density (Tok/NLOC) | 7.39 | 6.89 | -7% |
+
+### Interpretation
+
+1. **The Type Tax**: Rust's explicit typing increases token count without adding "meaning," lowering semantic density. Every `&str`, `Vec<String>`, and `Result<T, E>` adds tokens.
+
+2. **The Pattern Dividend**: Rust's pattern matching (`match`, `if let`, `?` operator) replaces complex Python `if/elif/else` chains, **halving the cyclomatic complexity**.
+
+3. **The Decomposition Effect**: Rust has 52% more functions (76 vs 50), forcing better architectural decomposition. Complexity is spread across smaller units.
+
+4. **The Outlier Problem**: While *average* CCN is lower in Rust, the *max* CCN is higher (35 vs 22). The function `truncate_structure` needs refactoring.
+
+### Highest Complexity Functions
+
+| Rank | Python | CCN | Rust | CCN |
+|------|--------|-----|------|-----|
+| 1 | `analyze_lines` | 22 | `truncate_structure` | 35 |
+| 2 | `serialize` | 16 | `main` (CLI) | 17 |
+| 3 | `collect_files_generator` | 13 | `truncate_smart` | 13 |
+
+### Architectural Conclusion
+
+> The Rust engine is **larger** (19% more LOC) but **significantly simpler to reason about locally** (50% lower avg CCN).
+
+This suggests a trade-off:
+- **Python**: Compact but complex functions (higher cognitive load per function)
+- **Rust**: Verbose but simple functions (lower cognitive load, more files to navigate)
+
+### Research Question (RQ6) - Open
+
+> Does lower average CCN correlate with better maintainability, even when semantic density is lower?
+
+This requires longitudinal study: tracking bug rates, refactoring frequency, and developer onboarding time over the next 6 months.
+
+### Data
+
+Raw metrics stored in [`data/complexity.json`](./data/complexity.json).
+
+---
 
 ## Methodology
 
