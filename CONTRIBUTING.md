@@ -84,6 +84,45 @@ head -1 /tmp/test_output.txt  # Should start with ++++++++++
 - Verify tests pass before submitting PR
 - Add test descriptions in docstrings
 
+## 🔬 Differential Testing (pm_coach)
+
+To verify parity between the Python and Rust engines against real-world repositories, use the `pm_coach` tool.
+
+### Usage
+```bash
+# Test against a specific GitHub repo
+python3 -m pm_coach.cli https://github.com/psf/requests
+
+# Test against a local directory
+python3 -m pm_coach.cli /path/to/local/repo
+
+# Verbose output showing clone time and file counts
+python3 -m pm_coach.cli https://github.com/facebook/react --verbose
+```
+
+### When to use it
+- When implementing a new Language Analyzer
+- When modifying the core serialization logic (`serialize()`, `walk_directory()`)
+- When changing pattern matching or ignore/include logic
+- Before a major release (vX.Y.0)
+
+### Recommended test repositories
+```bash
+# Quick validation (small repos)
+python3 -m pm_coach.cli https://github.com/psf/black
+python3 -m pm_coach.cli https://github.com/nvm-sh/nvm
+
+# Stress test (large repos)
+python3 -m pm_coach.cli https://github.com/facebook/react
+python3 -m pm_coach.cli https://github.com/tokio-rs/tokio
+```
+
+### Interpreting results
+- **PASS**: Identical output from both engines
+- **FAIL - OUTPUT_MISMATCH**: Line-by-line differences detected
+- **FAIL - MISSING_FILE**: Rust engine missing files that Python includes
+- **FAIL - EXTRA_FILE**: Rust engine including files that Python excludes
+
 ## Submitting Changes
 
 1. Commit your changes with clear messages:
