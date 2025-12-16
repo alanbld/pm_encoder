@@ -10,6 +10,12 @@
 
 **CFD = Context Fractal Distributed**
 
+| Letter | Meaning | Description |
+|--------|---------|-------------|
+| **C** | Context | The semantic understanding of code and intent |
+| **F** | Fractal | Self-similar structure at every scale (Project → Module → Function → Line) |
+| **D** | Distributed | Shared state across multiple AI agents, sessions, and time |
+
 The CFD Protocol Suite implements the Context Fractal Distributed protocol for LLM context management, achieving massive token reduction while preserving semantic integrity through adaptive learning and vector-based retrieval.
 
 > "CFD Protocol is evolving into the world's first Human-AI Collaborative Context Intelligence Platform"
