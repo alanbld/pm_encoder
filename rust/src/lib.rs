@@ -16,11 +16,11 @@
 //! interfaces without coupling to any specific runtime environment.
 
 use std::fs;
-use std::io::Read;
 use std::path::Path;
 use std::time::SystemTime;
 use serde::{Deserialize, Serialize};
 use globset::Glob;
+use walkdir::WalkDir;
 
 pub mod analyzers;
 pub mod lenses;
@@ -83,13 +83,15 @@ pub struct EncoderConfig {
 
 impl Default for EncoderConfig {
     fn default() -> Self {
+        // Default patterns match Python: [".git", "target", ".venv", "__pycache__", "*.pyc", "*.swp"]
         Self {
             ignore_patterns: vec![
                 ".git".to_string(),
+                "target".to_string(),
+                ".venv".to_string(),
                 "__pycache__".to_string(),
                 "*.pyc".to_string(),
-                "node_modules".to_string(),
-                "target".to_string(),
+                "*.swp".to_string(),
             ],
             include_patterns: vec![],
             sort_by: "name".to_string(),
@@ -197,6 +199,43 @@ pub fn is_too_large(size: u64, limit: u64) -> bool {
     size > limit
 }
 
+/// Read file content with binary detection and encoding fallback
+///
+/// Matches Python's behavior:
+/// 1. Read file as bytes
+/// 2. Check for binary (null bytes) - return None if binary
+/// 3. Try UTF-8 decoding
+/// 4. Fallback to Latin-1 (ISO-8859-1) if UTF-8 fails
+///
+/// # Arguments
+///
+/// * `bytes` - Raw file content as bytes
+///
+/// # Returns
+///
+/// * `Some(String)` - Decoded content
+/// * `None` - File is binary (should be skipped)
+pub fn read_file_content(bytes: &[u8]) -> Option<String> {
+    // Check for binary content
+    if is_binary(bytes) {
+        return None;
+    }
+
+    // Try UTF-8 first
+    let content = match String::from_utf8(bytes.to_vec()) {
+        Ok(s) => s,
+        Err(_) => {
+            // Fallback: decode as Latin-1 (ISO-8859-1)
+            // Latin-1 is a 1:1 byte-to-char mapping, never fails
+            bytes.iter().map(|&b| b as char).collect()
+        }
+    };
+
+    // Normalize line endings to \n (like Python's read_text())
+    // \r\n -> \n, then \r -> \n
+    Some(content.replace("\r\n", "\n").replace('\r', "\n"))
+}
+
 /// Check if a path matches any of the given glob patterns
 ///
 /// # Arguments
@@ -246,55 +285,52 @@ fn matches_patterns(path: &str, patterns: &[String]) -> bool {
 ///
 /// * `path` - Relative path to check
 /// * `ignore_patterns` - Patterns to ignore
-/// * `include_patterns` - Patterns to include (overrides ignore)
+/// * `include_patterns` - Patterns to include
 ///
 /// # Returns
 ///
 /// * `true` if file should be included, `false` otherwise
 ///
-/// # Logic
+/// # Logic (matches Python behavior)
 ///
-/// - If include_patterns is non-empty and ignore_patterns is empty:
-///   → Whitelist mode: only include files matching include_patterns
-/// - If both include_patterns and ignore_patterns are non-empty:
-///   → Precedence mode: include_patterns override ignore_patterns,
-///     but files matching neither follow ignore rules
-/// - If only ignore_patterns is non-empty:
-///   → Blacklist mode: exclude files matching ignore_patterns
+/// 1. Check ignore patterns FIRST - if match, EXCLUDE (no override by includes)
+/// 2. Pure whitelist mode: if include_patterns exist AND ignore_patterns is empty,
+///    file must match at least one include pattern
+/// 3. Hybrid mode: if both exist, file just needs to NOT match ignore patterns
+///    (include patterns don't act as a filter, they're for explicit inclusion of ignored items)
+/// 4. If no patterns or only ignore patterns, include by default (if not ignored)
 fn should_include_file(
     path: &str,
     ignore_patterns: &[String],
     include_patterns: &[String],
 ) -> bool {
-    let has_include = !include_patterns.is_empty();
-    let has_ignore = !ignore_patterns.is_empty();
+    // Check ignore patterns FIRST (they take precedence over includes)
+    // This matches Python behavior where directory-level ignores can't be overridden
+    if matches_patterns(path, ignore_patterns) {
+        return false;  // Ignored paths are always excluded
+    }
 
-    // Case 1: Only include patterns (whitelist mode)
-    if has_include && !has_ignore {
+    // Pure whitelist mode: only when include_patterns exist AND no ignore_patterns
+    // In this mode, files must match at least one include pattern
+    if !include_patterns.is_empty() && ignore_patterns.is_empty() {
         return matches_patterns(path, include_patterns);
     }
 
-    // Case 2: Both include and ignore patterns (precedence mode)
-    if has_include && has_ignore {
-        // Include patterns take precedence
-        if matches_patterns(path, include_patterns) {
-            return true;
-        }
-        // Otherwise apply ignore patterns
-        return !matches_patterns(path, ignore_patterns);
-    }
-
-    // Case 3: Only ignore patterns (blacklist mode)
-    !matches_patterns(path, ignore_patterns)
+    // Hybrid mode (both patterns) or blacklist mode (only ignore):
+    // If not ignored, include by default
+    true
 }
 
 /// Walk directory and collect file entries
 ///
+/// Uses WalkDir with filter_entry for directory pruning - ignored directories
+/// are never entered, matching Python's behavior.
+///
 /// # Arguments
 ///
 /// * `root` - Root directory path
-/// * `ignore_patterns` - Patterns to ignore
-/// * `include_patterns` - Patterns to include (overrides ignore)
+/// * `ignore_patterns` - Patterns to ignore (applies to directories and files)
+/// * `include_patterns` - Patterns to include (only applies to files)
 /// * `max_size` - Maximum file size in bytes
 ///
 /// # Returns
@@ -313,107 +349,134 @@ pub fn walk_directory(
     }
 
     let mut entries = Vec::new();
-    walk_recursive(
-        root_path,
-        root_path,
-        &mut entries,
-        max_size,
-        ignore_patterns,
-        include_patterns,
-    )?;
 
-    Ok(entries)
-}
+    // Create walker with directory pruning via filter_entry
+    // filter_entry is called BEFORE descending into a directory
+    // follow_links(true) matches Python's default behavior
+    let walker = WalkDir::new(root_path)
+        .follow_links(true)
+        .into_iter()
+        .filter_entry(|entry| {
+            // Get the path relative to root for pattern matching
+            let path = entry.path();
 
-/// Recursive directory walker helper
-fn walk_recursive(
-    current: &Path,
-    root: &Path,
-    entries: &mut Vec<FileEntry>,
-    max_size: u64,
-    ignore_patterns: &[String],
-    include_patterns: &[String],
-) -> Result<(), String> {
-    if !current.is_dir() {
-        return Ok(());
-    }
+            // Always include the root directory itself
+            if path == root_path {
+                return true;
+            }
 
-    let read_dir = fs::read_dir(current).map_err(|e| format!("Failed to read dir: {}", e))?;
+            // Get relative path for pattern matching
+            let rel_path = match path.strip_prefix(root_path) {
+                Ok(p) => p,
+                Err(_) => return false,
+            };
 
-    for entry_result in read_dir {
-        let entry = entry_result.map_err(|e| format!("Failed to read entry: {}", e))?;
+            let path_str = match rel_path.to_str() {
+                Some(s) => s,
+                None => return false,
+            };
+
+            // For directories: check if directory should be pruned (ignored)
+            // This prevents entering .git, .llm_archive, node_modules, etc.
+            if entry.file_type().is_dir() {
+                // Check if this directory matches any ignore pattern
+                // If so, skip the entire tree by returning false
+                !matches_patterns(path_str, ignore_patterns)
+            } else {
+                // For files: always return true here, we'll filter later
+                // (filter_entry affects directory traversal, not file inclusion)
+                true
+            }
+        });
+
+    // Process walker entries
+    for result in walker {
+        let entry = match result {
+            Ok(e) => e,
+            Err(e) => {
+                // Skip entries we can't read (permission denied, etc.)
+                eprintln!("Warning: {}", e);
+                continue;
+            }
+        };
+
+        // Skip directories (we only want files)
+        if entry.file_type().is_dir() {
+            continue;
+        }
+
         let path = entry.path();
 
-        if path.is_dir() {
-            // For directories, always recurse (don't filter by patterns yet)
-            // because files inside might match even if the directory doesn't
-            walk_recursive(&path, root, entries, max_size, ignore_patterns, include_patterns)?;
-        } else if path.is_file() {
-            // Calculate relative path for pattern matching
-            let rel_path = path
-                .strip_prefix(root)
-                .map_err(|e| format!("Failed to get relative path: {}", e))?;
+        // Get relative path for pattern matching and output
+        let rel_path = match path.strip_prefix(root_path) {
+            Ok(p) => p,
+            Err(_) => continue,
+        };
 
-            let path_str = rel_path
-                .to_str()
-                .ok_or_else(|| format!("Path is not valid UTF-8: {}", rel_path.display()))?;
+        let path_str = match rel_path.to_str() {
+            Some(s) => s,
+            None => continue,
+        };
 
-            // Check if this file should be included based on patterns
-            if !should_include_file(path_str, ignore_patterns, include_patterns) {
-                continue;
-            }
-            // Get file metadata
-            let metadata = fs::metadata(&path).map_err(|e| format!("Failed to read metadata: {}", e))?;
-            let file_size = metadata.len();
-
-            // Skip files that are too large
-            if is_too_large(file_size, max_size) {
-                continue;
-            }
-
-            // Extract timestamps
-            let mtime = metadata.modified()
-                .ok()
-                .and_then(|t| t.duration_since(SystemTime::UNIX_EPOCH).ok())
-                .map(|d| d.as_secs())
-                .unwrap_or(0);
-
-            // ctime: On Unix, use created(). Falls back to mtime if unavailable.
-            let ctime = metadata.created()
-                .ok()
-                .and_then(|t| t.duration_since(SystemTime::UNIX_EPOCH).ok())
-                .map(|d| d.as_secs())
-                .unwrap_or(mtime);
-
-            // Read file content
-            let mut file = fs::File::open(&path).map_err(|e| format!("Failed to open file: {}", e))?;
-            let mut buffer = Vec::new();
-            file.read_to_end(&mut buffer)
-                .map_err(|e| format!("Failed to read file: {}", e))?;
-
-            // Skip binary files
-            if is_binary(&buffer) {
-                continue;
-            }
-
-            // Convert to UTF-8 string
-            let content = String::from_utf8(buffer)
-                .map_err(|_| format!("File is not valid UTF-8: {}", path.display()))?;
-
-            // Calculate MD5
-            let md5 = calculate_md5(&content);
-
-            entries.push(FileEntry {
-                path: path_str.to_string(),
-                content,
-                md5,
-                mtime,
-                ctime,
-            });
+        // Check if this file should be included based on patterns
+        // Note: ignore patterns already handled by filter_entry for directories,
+        // but we still need to check file-level ignores and include patterns
+        if !should_include_file(path_str, ignore_patterns, include_patterns) {
+            continue;
         }
+
+        // Get file metadata
+        let metadata = match fs::metadata(path) {
+            Ok(m) => m,
+            Err(_) => continue,
+        };
+
+        let file_size = metadata.len();
+
+        // Skip files that are too large
+        if is_too_large(file_size, max_size) {
+            continue;
+        }
+
+        // Extract timestamps
+        let mtime = metadata.modified()
+            .ok()
+            .and_then(|t| t.duration_since(SystemTime::UNIX_EPOCH).ok())
+            .map(|d| d.as_secs())
+            .unwrap_or(0);
+
+        // ctime: On Unix, use created(). Falls back to mtime if unavailable.
+        let ctime = metadata.created()
+            .ok()
+            .and_then(|t| t.duration_since(SystemTime::UNIX_EPOCH).ok())
+            .map(|d| d.as_secs())
+            .unwrap_or(mtime);
+
+        // Read file content (bytes first, then decode)
+        let buffer = match fs::read(path) {
+            Ok(b) => b,
+            Err(_) => continue,
+        };
+
+        // Use read_file_content helper (handles binary detection + encoding)
+        let content = match read_file_content(&buffer) {
+            Some(s) => s,
+            None => continue, // Skip binary files
+        };
+
+        // Calculate MD5
+        let md5 = calculate_md5(&content);
+
+        entries.push(FileEntry {
+            path: path_str.to_string(),
+            content,
+            md5,
+            mtime,
+            ctime,
+        });
     }
 
-    Ok(())
+    Ok(entries)
 }
 
 /// Truncate content to a maximum number of lines (simple mode)
@@ -739,8 +802,9 @@ pub fn serialize_file_with_truncation(
     // Content
     output.push_str(&content);
 
-    // Ensure content ends with newline
-    if !output.ends_with('\n') {
+    // Ensure content ends with newline (check content, not whole output)
+    // This matches Python's behavior for empty files
+    if !content.ends_with('\n') {
         output.push('\n');
     }
 
@@ -907,9 +971,59 @@ mod tests {
     }
 
     #[test]
+    fn test_read_file_content() {
+        // UTF-8 content
+        let utf8 = b"Hello, world!";
+        assert_eq!(read_file_content(utf8), Some("Hello, world!".to_string()));
+
+        // Binary content (null bytes) - should return None
+        let binary = b"Hello\x00world";
+        assert_eq!(read_file_content(binary), None);
+
+        // Latin-1 content (non-UTF-8 but no null bytes)
+        // 0xE9 is 'é' in Latin-1, invalid as standalone UTF-8
+        let latin1 = b"caf\xe9";
+        let result = read_file_content(latin1);
+        assert!(result.is_some());
+        assert_eq!(result.unwrap(), "café"); // Latin-1 decoded
+
+        // Line ending normalization (like Python's read_text())
+        let crlf = b"line1\r\nline2\r\nline3";
+        assert_eq!(read_file_content(crlf), Some("line1\nline2\nline3".to_string()));
+
+        let cr = b"line1\rline2\rline3";
+        assert_eq!(read_file_content(cr), Some("line1\nline2\nline3".to_string()));
+
+        let mixed = b"line1\r\nline2\rline3\nline4";
+        assert_eq!(read_file_content(mixed), Some("line1\nline2\nline3\nline4".to_string()));
+    }
+
+    #[test]
     fn test_size_check() {
         assert!(is_too_large(10_000_000, 5_000_000)); // 10MB > 5MB
         assert!(!is_too_large(1_000_000, 5_000_000)); // 1MB < 5MB
+    }
+
+    #[test]
+    fn test_matches_patterns_directory() {
+        // Test that ".llm_archive" pattern matches files inside the directory
+        let patterns = vec![".llm_archive".to_string()];
+
+        // Should match files inside .llm_archive
+        assert!(matches_patterns(".llm_archive/file.md", &patterns),
+            ".llm_archive pattern should match .llm_archive/file.md");
+
+        // Should match nested files
+        assert!(matches_patterns(".llm_archive/subdir/file.md", &patterns),
+            ".llm_archive pattern should match nested files");
+
+        // Should not match unrelated files
+        assert!(!matches_patterns("src/main.rs", &patterns),
+            ".llm_archive pattern should not match src/main.rs");
+
+        // Should not match similarly-named files
+        assert!(!matches_patterns("llm_archive/file.md", &patterns),
+            ".llm_archive pattern should not match llm_archive (no dot)");
     }
 
     #[test]

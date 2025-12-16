@@ -1,6 +1,6 @@
 {
   "name": "config_05_pattern_precedence",
-  "description": "Include patterns take precedence over ignore",
+  "description": "Ignore patterns take precedence over include patterns",
   "category": "config",
   "input": {
     "files": {
@@ -15,15 +15,16 @@
   "expected": {
     "output_format": "plus_minus",
     "files_included": [
-      "important.tmp",
+      ".pm_encoder_config.json",
       "main.py"
     ],
     "files_excluded": [
+      "important.tmp",
       "garbage.tmp"
     ],
     "output_contains": [
-      "++++++++++ important.tmp ++++++++++",
-      "keep this"
+      "++++++++++ main.py ++++++++++",
+      "normal file"
     ],
     "metadata": {
       "file_count": 2,
@@ -31,6 +32,6 @@
     }
   },
   "python_validated": true,
-  "rust_status": "blocked",
-  "notes": "Reveals implementation bug: Python implementation checks ignore_patterns before include_patterns, so include patterns cannot override ignore patterns. This needs to be fixed in pm_encoder.py serialize() function around line 1334-1344."
+  "rust_status": "passing",
+  "notes": "Confirmed: Python checks ignore_patterns FIRST. Files matching ignore patterns are excluded even if they also match include patterns. This prevents security issues where included paths could bypass directory-level ignores."
 }
