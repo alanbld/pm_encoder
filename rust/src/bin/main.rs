@@ -60,7 +60,7 @@ struct Cli {
     exclude: Vec<String>,
 
     // ═══════════════════════════════════════════════════════════════════════════
-    // SORTING
+    // SORTING & STREAMING
     // ═══════════════════════════════════════════════════════════════════════════
 
     /// Sort files by 'name' (default), 'mtime' (modification time), or 'ctime' (creation time).
@@ -70,6 +70,11 @@ struct Cli {
     /// Sort order: 'asc' (ascending, default) or 'desc' (descending).
     #[arg(long = "sort-order", value_enum, default_value = "asc")]
     sort_order: SortOrder,
+
+    /// Enable streaming mode: output files immediately as they're found.
+    /// Disables global sorting for lower Time-To-First-Byte (TTFB).
+    #[arg(long = "stream")]
+    stream: bool,
 
     // ═══════════════════════════════════════════════════════════════════════════
     // TRUNCATION
@@ -230,10 +235,23 @@ fn main() {
         SortOrder::Desc => "desc".to_string(),
     };
 
+    config.stream = cli.stream;
+
+    // Streaming mode warning for file output
+    if cli.stream && cli.output.is_some() {
+        eprintln!("Warning: --stream mode writes directly to stdout, ignoring -o/--output");
+    }
+
     // Serialize the project
     match pm_encoder::serialize_project_with_config(project_root.to_str().unwrap(), &config) {
         Ok(output) => {
-            // Write to file or stdout
+            // In streaming mode, output was already written directly to stdout
+            if cli.stream {
+                // Nothing more to do - streaming already wrote to stdout
+                return;
+            }
+
+            // Batch mode: write to file or stdout
             if let Some(output_path) = cli.output {
                 match std::fs::write(&output_path, &output) {
                     Ok(_) => {

@@ -79,6 +79,8 @@ pub struct EncoderConfig {
     pub truncate_mode: String,
     /// Maximum file size in bytes (default: 5MB)
     pub max_file_size: u64,
+    /// Enable streaming mode (immediate output, no global sort)
+    pub stream: bool,
 }
 
 impl Default for EncoderConfig {
@@ -99,6 +101,7 @@ impl Default for EncoderConfig {
             truncate_lines: 0,
             truncate_mode: "simple".to_string(),
             max_file_size: 5 * 1024 * 1024, // 5MB
+            stream: false, // Default to batch mode for backward compatibility
         }
     }
 }
@@ -115,13 +118,14 @@ impl EncoderConfig {
         Ok(Self {
             ignore_patterns: config.ignore_patterns,
             include_patterns: config.include_patterns,
+            stream: false, // Streaming is only enabled via CLI flag
             ..Default::default()
         })
     }
 }
 
 /// Version of the pm_encoder library
-pub const VERSION: &str = "0.4.0";
+pub const VERSION: &str = "0.5.0";
 
 /// Returns the version of the pm_encoder library
 pub fn version() -> &'static str {
@@ -321,10 +325,149 @@ fn should_include_file(
     true
 }
 
-/// Walk directory and collect file entries
+/// Walk directory and yield file entries as an iterator (streaming)
 ///
 /// Uses WalkDir with filter_entry for directory pruning - ignored directories
 /// are never entered, matching Python's behavior.
+///
+/// This is the iterator-based version that enables streaming output.
+/// Files are yielded as they're discovered, enabling immediate output.
+///
+/// # Arguments
+///
+/// * `root` - Root directory path
+/// * `ignore_patterns` - Patterns to ignore (applies to directories and files)
+/// * `include_patterns` - Patterns to include (only applies to files)
+/// * `max_size` - Maximum file size in bytes
+///
+/// # Returns
+///
+/// * Iterator yielding FileEntry items
+pub fn walk_directory_iter(
+    root: &str,
+    ignore_patterns: Vec<String>,
+    include_patterns: Vec<String>,
+    max_size: u64,
+) -> impl Iterator<Item = FileEntry> {
+    let root_path = Path::new(root).to_path_buf();
+    let root_path_clone = root_path.clone();
+    let ignore_patterns_clone = ignore_patterns.clone();
+
+    // Create walker with directory pruning via filter_entry
+    // filter_entry is called BEFORE descending into a directory
+    // follow_links(true) matches Python's default behavior
+    WalkDir::new(&root_path)
+        .follow_links(true)
+        .into_iter()
+        .filter_entry(move |entry| {
+            // Get the path relative to root for pattern matching
+            let path = entry.path();
+
+            // Always include the root directory itself
+            if path == root_path_clone {
+                return true;
+            }
+
+            // Get relative path for pattern matching
+            let rel_path = match path.strip_prefix(&root_path_clone) {
+                Ok(p) => p,
+                Err(_) => return false,
+            };
+
+            let path_str = match rel_path.to_str() {
+                Some(s) => s,
+                None => return false,
+            };
+
+            // For directories: check if directory should be pruned (ignored)
+            // This prevents entering .git, .llm_archive, node_modules, etc.
+            if entry.file_type().is_dir() {
+                // Check if this directory matches any ignore pattern
+                // If so, skip the entire tree by returning false
+                !matches_patterns(path_str, &ignore_patterns_clone)
+            } else {
+                // For files: always return true here, we'll filter later
+                // (filter_entry affects directory traversal, not file inclusion)
+                true
+            }
+        })
+        .filter_map(move |result| {
+            let entry = match result {
+                Ok(e) => e,
+                Err(e) => {
+                    // Skip entries we can't read (permission denied, etc.)
+                    eprintln!("Warning: {}", e);
+                    return None;
+                }
+            };
+
+            // Skip directories (we only want files)
+            if entry.file_type().is_dir() {
+                return None;
+            }
+
+            let path = entry.path();
+
+            // Get relative path for pattern matching and output
+            let rel_path = path.strip_prefix(&root_path).ok()?;
+            let path_str = rel_path.to_str()?;
+
+            // Check if this file should be included based on patterns
+            // Note: ignore patterns already handled by filter_entry for directories,
+            // but we still need to check file-level ignores and include patterns
+            if !should_include_file(path_str, &ignore_patterns, &include_patterns) {
+                return None;
+            }
+
+            // Get file metadata
+            let metadata = fs::metadata(path).ok()?;
+            let file_size = metadata.len();
+
+            // Skip files that are too large
+            if is_too_large(file_size, max_size) {
+                return None;
+            }
+
+            // Extract timestamps
+            let mtime = metadata.modified()
+                .ok()
+                .and_then(|t| t.duration_since(SystemTime::UNIX_EPOCH).ok())
+                .map(|d| d.as_secs())
+                .unwrap_or(0);
+
+            // ctime: On Unix, use created(). Falls back to mtime if unavailable.
+            let ctime = metadata.created()
+                .ok()
+                .and_then(|t| t.duration_since(SystemTime::UNIX_EPOCH).ok())
+                .map(|d| d.as_secs())
+                .unwrap_or(mtime);
+
+            // Read file content (bytes first, then decode)
+            let buffer = fs::read(path).ok()?;
+
+            // Use read_file_content helper (handles binary detection + encoding)
+            let content = read_file_content(&buffer)?;
+
+            // Calculate MD5
+            let md5 = calculate_md5(&content);
+
+            Some(FileEntry {
+                path: path_str.to_string(),
+                content,
+                md5,
+                mtime,
+                ctime,
+            })
+        })
+}
+
+/// Walk directory and collect file entries (batch mode)
+///
+/// Uses WalkDir with filter_entry for directory pruning - ignored directories
+/// are never entered, matching Python's behavior.
+///
+/// This is the batch version that collects all files into a Vec.
+/// For streaming output, use `walk_directory_iter` instead.
 ///
 /// # Arguments
 ///
@@ -348,133 +491,13 @@ pub fn walk_directory(
         return Err(format!("Directory not found: {}", root));
     }
 
-    let mut entries = Vec::new();
-
-    // Create walker with directory pruning via filter_entry
-    // filter_entry is called BEFORE descending into a directory
-    // follow_links(true) matches Python's default behavior
-    let walker = WalkDir::new(root_path)
-        .follow_links(true)
-        .into_iter()
-        .filter_entry(|entry| {
-            // Get the path relative to root for pattern matching
-            let path = entry.path();
-
-            // Always include the root directory itself
-            if path == root_path {
-                return true;
-            }
-
-            // Get relative path for pattern matching
-            let rel_path = match path.strip_prefix(root_path) {
-                Ok(p) => p,
-                Err(_) => return false,
-            };
-
-            let path_str = match rel_path.to_str() {
-                Some(s) => s,
-                None => return false,
-            };
-
-            // For directories: check if directory should be pruned (ignored)
-            // This prevents entering .git, .llm_archive, node_modules, etc.
-            if entry.file_type().is_dir() {
-                // Check if this directory matches any ignore pattern
-                // If so, skip the entire tree by returning false
-                !matches_patterns(path_str, ignore_patterns)
-            } else {
-                // For files: always return true here, we'll filter later
-                // (filter_entry affects directory traversal, not file inclusion)
-                true
-            }
-        });
-
-    // Process walker entries
-    for result in walker {
-        let entry = match result {
-            Ok(e) => e,
-            Err(e) => {
-                // Skip entries we can't read (permission denied, etc.)
-                eprintln!("Warning: {}", e);
-                continue;
-            }
-        };
-
-        // Skip directories (we only want files)
-        if entry.file_type().is_dir() {
-            continue;
-        }
-
-        let path = entry.path();
-
-        // Get relative path for pattern matching and output
-        let rel_path = match path.strip_prefix(root_path) {
-            Ok(p) => p,
-            Err(_) => continue,
-        };
-
-        let path_str = match rel_path.to_str() {
-            Some(s) => s,
-            None => continue,
-        };
-
-        // Check if this file should be included based on patterns
-        // Note: ignore patterns already handled by filter_entry for directories,
-        // but we still need to check file-level ignores and include patterns
-        if !should_include_file(path_str, ignore_patterns, include_patterns) {
-            continue;
-        }
-
-        // Get file metadata
-        let metadata = match fs::metadata(path) {
-            Ok(m) => m,
-            Err(_) => continue,
-        };
-
-        let file_size = metadata.len();
-
-        // Skip files that are too large
-        if is_too_large(file_size, max_size) {
-            continue;
-        }
-
-        // Extract timestamps
-        let mtime = metadata.modified()
-            .ok()
-            .and_then(|t| t.duration_since(SystemTime::UNIX_EPOCH).ok())
-            .map(|d| d.as_secs())
-            .unwrap_or(0);
-
-        // ctime: On Unix, use created(). Falls back to mtime if unavailable.
-        let ctime = metadata.created()
-            .ok()
-            .and_then(|t| t.duration_since(SystemTime::UNIX_EPOCH).ok())
-            .map(|d| d.as_secs())
-            .unwrap_or(mtime);
-
-        // Read file content (bytes first, then decode)
-        let buffer = match fs::read(path) {
-            Ok(b) => b,
-            Err(_) => continue,
-        };
-
-        // Use read_file_content helper (handles binary detection + encoding)
-        let content = match read_file_content(&buffer) {
-            Some(s) => s,
-            None => continue, // Skip binary files
-        };
-
-        // Calculate MD5
-        let md5 = calculate_md5(&content);
-
-        entries.push(FileEntry {
-            path: path_str.to_string(),
-            content,
-            md5,
-            mtime,
-            ctime,
-        });
-    }
+    // Use the iterator version and collect into Vec
+    let entries: Vec<FileEntry> = walk_directory_iter(
+        root,
+        ignore_patterns.to_vec(),
+        include_patterns.to_vec(),
+        max_size,
+    ).collect();
 
     Ok(entries)
 }
@@ -859,13 +882,18 @@ pub fn serialize_project(root: &str) -> Result<String, String> {
 ///
 /// # Returns
 ///
-/// * `Ok(String)` - The serialized output
+/// * `Ok(String)` - The serialized output (empty string in streaming mode)
 /// * `Err(String)` - Error message if serialization fails
 pub fn serialize_project_with_config(
     root: &str,
     config: &EncoderConfig,
 ) -> Result<String, String> {
-    // Walk directory and collect file entries using EncoderConfig patterns
+    // Streaming mode: use iterator, write directly, return empty string
+    if config.stream {
+        return serialize_project_streaming(root, config);
+    }
+
+    // Batch mode: collect, sort, return complete string
     let entries = walk_directory(
         root,
         &config.ignore_patterns,
@@ -918,13 +946,72 @@ pub fn serialize_project_with_config(
     Ok(output)
 }
 
+/// Serialize a project in streaming mode (immediate output)
+///
+/// Writes each file to stdout as it's discovered, enabling immediate output
+/// without buffering the entire result. Global sorting is disabled in this mode.
+///
+/// # Arguments
+///
+/// * `root` - Path to the project root directory
+/// * `config` - Encoder configuration
+///
+/// # Returns
+///
+/// * `Ok(String)` - Always returns empty string (output goes to stdout)
+/// * `Err(String)` - Error message if serialization fails
+pub fn serialize_project_streaming(
+    root: &str,
+    config: &EncoderConfig,
+) -> Result<String, String> {
+    use std::io::{self, Write};
+
+    let root_path = Path::new(root);
+    if !root_path.exists() {
+        return Err(format!("Directory not found: {}", root));
+    }
+
+    // Warn if sorting options are specified (they're ignored in streaming mode)
+    if config.sort_by != "name" || config.sort_order != "asc" {
+        eprintln!(
+            "Warning: --stream mode ignores --sort-by and --sort-order (using directory order)"
+        );
+    }
+
+    let stdout = io::stdout();
+    let mut handle = stdout.lock();
+
+    // Stream files as they're discovered
+    for entry in walk_directory_iter(
+        root,
+        config.ignore_patterns.clone(),
+        config.include_patterns.clone(),
+        config.max_file_size,
+    ) {
+        let serialized = serialize_file_with_truncation(
+            &entry,
+            config.truncate_lines,
+            &config.truncate_mode,
+        );
+        // Write immediately to stdout
+        if handle.write_all(serialized.as_bytes()).is_err() {
+            break; // Broken pipe or similar, stop gracefully
+        }
+        // Flush to ensure immediate output
+        let _ = handle.flush();
+    }
+
+    // Return empty string - output was written directly
+    Ok(String::new())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
 
     #[test]
     fn test_version() {
-        assert_eq!(version(), "0.4.0");
+        assert_eq!(version(), "0.5.0");
     }
 
     #[test]
