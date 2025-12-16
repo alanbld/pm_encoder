@@ -5,10 +5,12 @@
 ## Overview
 
 This research project tracks the development of `pm_encoder`, a dual-engine codebase with:
-- **Python Engine** (reference implementation, v1.6.0)
-- **Rust Engine** (performance implementation, v0.5.0)
+- **Python Engine** (reference implementation, v1.6.0) - Streaming, 95% coverage
+- **Rust Engine** (performance implementation, v0.5.0) - Streaming, 85% coverage
 
 The goal is to empirically validate the **Convergence Hypothesis**: that Test-Driven Development using test vectors can accelerate feature parity between two language implementations 3-4x faster than traditional development.
+
+**Result:** ✅ **VALIDATED** - 100% parity achieved in just 3 days (vs. projected 3.5 months).
 
 ## Research Questions
 
@@ -21,11 +23,16 @@ The goal is to empirically validate the **Convergence Hypothesis**: that Test-Dr
 
 ## Current Status (Dec 16, 2025)
 
+### 🎉 CONVERGENCE ACHIEVED
+
+**On December 16, 2025, both engines reached 100% test vector parity.**
+
 ### Parity Metrics
-- **Test Vectors:** 10/10 passing (100% active parity)
+- **Test Vectors:** 25/25 passing (100% parity) ✅
 - **Python Coverage:** 95%
-- **Rust Coverage:** TBD (cargo tarpaulin setup pending)
-- **Timeline:** 15 days ahead of original schedule
+- **Rust Coverage:** 85.38%
+- **Timeline:** 15+ days ahead of original schedule
+- **Streaming Parity:** Both engines support `--stream` flag
 
 ### Milestones Completed
 - ✅ v0.1.0 - Foundation (Rust)
@@ -154,8 +161,9 @@ Daily snapshots tracked in `data/daily_snapshots.csv`:
 ## Timeline
 
 - **Start:** December 13, 2025
-- **Duration:** 6 months (through June 2025)
-- **Target:** 100% parity by March 31, 2025
+- **Convergence:** December 16, 2025 (100% parity achieved!)
+- **Duration:** Ongoing research through June 2026
+- **Original Target:** 100% parity by March 31, 2026 - **ACHIEVED 3.5 MONTHS EARLY!**
 
 ## Publications
 
