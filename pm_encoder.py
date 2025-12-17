@@ -5,7 +5,7 @@ using the Plus/Minus format, with robust directory pruning,
 filtering, and sorting capabilities.
 """
 
-__version__ = "1.6.0"
+__version__ = "1.7.0"
 __author__ = "pm_encoder contributors"
 __license__ = "MIT"
 

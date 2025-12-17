@@ -5,6 +5,18 @@ All notable changes to pm_encoder will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.7.0] - 2025-12-17
+
+### Added - The Intelligence Layer 🧠
+- **Token Budgeting**: New `--token-budget` flag (e.g., `100k`, `2M`) to limit output size.
+- **Priority Groups**: Lenses now support `groups` with numeric priorities (0-100).
+- **Hybrid Strategy**: New `--budget-strategy hybrid` automatically truncates massive files to Structure Mode to fit them into the budget, rather than dropping them.
+- **Token Estimation**: Optional `tiktoken` integration for precise counting, with heuristic fallback.
+
+### Changed
+- **Batch Mode**: Budgeting automatically disables streaming to perform global priority sorting.
+- **Budget Report**: Detailed stderr report showing token usage and dropped/truncated files.
+
 ## [1.6.0] - 2025-12-16
 
 ### Added - The Streaming Pipeline 🌊
