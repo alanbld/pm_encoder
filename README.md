@@ -491,6 +491,53 @@ Example:
 
 ---
 
+## 🧠 Context Economics (v1.7.0+)
+
+Don't guess file limits. Set a **Token Budget**, and let pm_encoder curate the context for you.
+
+### Token Budgeting
+
+Limit the output size to fit your LLM's context window (e.g., 8k, 100k, 2M).
+
+```bash
+# Limit output to 100,000 tokens (drops low-priority files first)
+./pm_encoder.py . --token-budget 100k
+```
+
+### Budget Strategies
+
+Decide what happens when files don't fit:
+
+*   **`drop`** (Default): Skips the file entirely.
+*   **`truncate`**: Forces the file into Structure Mode (signatures only).
+*   **`hybrid`** (Recommended): Smart curation.
+    *   If a file takes up >10% of the budget, it auto-truncates to Structure Mode.
+    *   If it fits, it keeps full content.
+    *   If it still doesn't fit, it drops.
+
+```bash
+# Maximize information density
+./pm_encoder.py . --token-budget 50k --budget-strategy hybrid
+```
+
+### Priority Groups
+
+Define what matters most in `.pm_encoder_config.json`. Higher priority files are added first.
+
+```json
+"lenses": {
+  "architecture": {
+    "groups": [
+      { "pattern": "src/core/**", "priority": 100 },
+      { "pattern": "src/utils/**", "priority": 50 },
+      { "pattern": "tests/**", "priority": 10 }
+    ]
+  }
+}
+```
+
+---
+
 ## Configuration
 
 You can control the default behavior of the script by placing a `.pm_encoder_config.json` file in your project's root directory.
