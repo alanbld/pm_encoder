@@ -1,5 +1,75 @@
 # Weekly Research Notes
 
+## December 17, 2025
+
+### v1.7.0 Release - The Intelligence Update (Intentional Divergence)
+
+**Key Event:** Python v1.7.0 released with the Intelligence Layer. This creates a deliberate feature gap with Rust v0.5.0.
+
+### New Features (Python-only)
+
+| Feature | Description | Rust Status |
+|---------|-------------|-------------|
+| Token Budgeting | `--token-budget 100k` limits output size | Not implemented |
+| Priority Groups | Lens `groups` with numeric priorities | Not implemented |
+| Budget Strategies | `drop`, `truncate`, `hybrid` modes | Not implemented |
+| Token Estimation | tiktoken + heuristic fallback | Not implemented |
+
+### Parity Impact
+
+**Before v1.7.0:**
+- Feature Parity: ~100% (Python v1.6.0 ≈ Rust v0.5.0)
+- Test Vector Parity: 100% (25/25)
+
+**After v1.7.0:**
+- Feature Parity: ~80% (Rust lacks Intelligence Layer)
+- Test Vector Parity: Still 100% (budgeting doesn't affect existing vectors)
+
+### Research Observation
+
+> **The "Feature Denominator" just increased.** Adding 4 new Python features without Rust equivalents causes apparent parity regression, even though Rust hasn't changed.
+
+This validates the **Iron Mold Protocol**:
+1. Stabilize complex features in Python first
+2. Prove correctness with comprehensive tests (53 new tests)
+3. Port to Rust once the API surface is frozen
+
+### Strategy: Controlled Divergence
+
+The Intelligence Layer is intentionally Python-first because:
+- Token budgeting requires complex data structures (priority queues, token estimation)
+- Hybrid strategy involves dynamic truncation decisions
+- Better to iterate on the algorithm in Python, then port the finalized version
+
+### Metrics Snapshot (2025-12-17)
+
+```
+pm_encoder Python: v1.7.0  (Intelligence Layer)
+pm_encoder Rust:   v0.5.0  (Streaming only)
+Test Vectors:      25/25 passing (core parity)
+New Python Tests:  53 (priority, budgeting, strategies)
+Feature Gap:       4 features (budgeting, priority, strategies, estimation)
+```
+
+### Next Target: Rust v0.6.0
+
+**Goal:** Begin closing the gap with Analyzer improvements
+- Port structure extraction refinements
+- Prepare foundation for eventual budgeting port
+- Maintain test vector parity
+
+### Research Questions Updated
+
+**RQ7 (New):**
+> Does "Iron Mold" development (Python-first stabilization) reduce total development time compared to parallel implementation?
+
+**Hypothesis:** Yes, because:
+- Bugs found in Python (e.g., argument order) don't need to be fixed twice
+- API changes during iteration only affect one codebase
+- Rust port benefits from finalized test suite
+
+---
+
 ## Week of December 16, 2025
 
 ### v0.5.0 Release - Rust Streaming Parity Restored
