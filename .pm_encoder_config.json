@@ -1,4 +1,5 @@
 {
+  "_comment": "pm_encoder Configuration v1.7.0 - Priority Groups Support",
   "ignore_patterns": [
     ".git",
     ".idea",
@@ -35,6 +36,21 @@
   "lenses": {
     "architecture": {
       "description": "High-level code structure and configuration (optimized)",
+      "_comment_groups": "v1.7.0: Priority Groups - higher priority files are ranked first in output",
+      "groups": [
+        {"name": "python_core", "pattern": "*.py", "priority": 100, "truncate_mode": "structure"},
+        {"name": "rust_core", "pattern": "rust/src/**/*.rs", "priority": 100, "truncate_mode": "structure"},
+        {"name": "rust_lib", "pattern": "**/*.rs", "priority": 95, "truncate_mode": "structure"},
+        {"name": "cargo", "pattern": "Cargo.toml", "priority": 90},
+        {"name": "config_toml", "pattern": "*.toml", "priority": 85},
+        {"name": "config_json", "pattern": "*.json", "priority": 80},
+        {"name": "makefile", "pattern": "Makefile", "priority": 75},
+        {"name": "dockerfile", "pattern": "Dockerfile", "priority": 70},
+        {"name": "readme", "pattern": "README.md", "priority": 65},
+        {"name": "typescript", "pattern": "*.ts", "priority": 60},
+        {"name": "javascript", "pattern": "*.js", "priority": 55}
+      ],
+      "fallback": {"priority": 50, "truncate_mode": "smart"},
       "include": [
         "*.py",
         "*.rs",

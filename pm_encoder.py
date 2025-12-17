@@ -1035,14 +1035,42 @@ def truncate_content(
 # ============================================================================
 
 class LensManager:
-    """Manages context lenses for focused project serialization."""
+    """Manages context lenses for focused project serialization.
 
-    # Built-in lenses
+    v1.7.0: Added Priority Groups support for intelligent file ranking.
+    """
+
+    # Built-in lenses with v1.7.0 Priority Groups support
     BUILT_IN_LENSES = {
         "architecture": {
             "description": "High-level code structure and configuration",
             "truncate_mode": "structure",
             "truncate": 2000,  # Safety limit for non-code files
+            # v1.7.0: Priority Groups for intelligent file ranking
+            "groups": [
+                # Core implementation files - highest priority
+                {"name": "python_core", "pattern": "*.py", "priority": 100, "truncate_mode": "structure"},
+                {"name": "rust_core", "pattern": "rust/src/**/*.rs", "priority": 100, "truncate_mode": "structure"},
+                {"name": "rust_lib", "pattern": "**/*.rs", "priority": 95, "truncate_mode": "structure"},
+                # Configuration files - high priority
+                {"name": "cargo", "pattern": "Cargo.toml", "priority": 90},
+                {"name": "pyproject", "pattern": "pyproject.toml", "priority": 90},
+                {"name": "config_toml", "pattern": "*.toml", "priority": 85},
+                {"name": "config_json", "pattern": "*.json", "priority": 80},
+                {"name": "config_yaml", "pattern": "*.yaml", "priority": 80},
+                {"name": "config_yml", "pattern": "*.yml", "priority": 80},
+                # Build files - medium-high priority
+                {"name": "makefile", "pattern": "Makefile", "priority": 75},
+                {"name": "dockerfile", "pattern": "Dockerfile", "priority": 70},
+                # Documentation - medium priority
+                {"name": "readme", "pattern": "README.md", "priority": 65},
+                # JavaScript/TypeScript - medium priority
+                {"name": "typescript", "pattern": "*.ts", "priority": 60},
+                {"name": "tsx", "pattern": "*.tsx", "priority": 60},
+                {"name": "javascript", "pattern": "*.js", "priority": 55},
+                {"name": "jsx", "pattern": "*.jsx", "priority": 55},
+            ],
+            "fallback": {"priority": 50, "truncate_mode": "smart"},
             "exclude": [
                 # Test directories
                 "tests/**", "test/**",
@@ -1111,6 +1139,158 @@ class LensManager:
         self.config_lenses = config_lenses or {}
         self.active_lens = None
         self.active_lens_config = None
+
+    def _match_pattern(self, file_path: Path, pattern: str) -> bool:
+        """
+        Match a file path against a glob pattern.
+
+        Handles both simple patterns (*.py) and recursive patterns (**/*.rs, tests/**).
+
+        Args:
+            file_path: Path object to match
+            pattern: Glob pattern string
+
+        Returns:
+            True if the file matches the pattern
+        """
+        file_str = file_path.as_posix() if hasattr(file_path, 'as_posix') else str(file_path)
+        file_name = Path(file_str).name
+
+        # Handle ** recursive patterns
+        if '**' in pattern:
+            # Convert ** to fnmatch-compatible pattern
+            # ** matches any number of path components (including zero)
+            # "tests/**" -> should match tests/foo.py, tests/a/b/c.py
+            # "src/**/*.py" -> should match src/foo.py, src/a/b.py
+            # "**/*.rs" -> should match foo.rs, a/b/c.rs
+
+            # Strategy: Replace ** with a regex-like approach via fnmatch
+            # Split pattern on ** and check if path matches the structure
+
+            parts = pattern.split('**')
+            if len(parts) == 2:
+                prefix, suffix = parts
+
+                # Clean up prefix and suffix
+                prefix = prefix.rstrip('/')
+                suffix = suffix.lstrip('/')
+
+                # Case 1: "tests/**" - prefix only, no suffix
+                if not suffix:
+                    if prefix:
+                        return file_str.startswith(prefix + '/') or file_str == prefix
+                    return True  # "**" alone matches everything
+
+                # Case 2: "**/*.rs" - suffix only, no prefix
+                if not prefix:
+                    return fnmatch(file_name, suffix) or fnmatch(file_str, '*/' + suffix)
+
+                # Case 3: "src/**/*.py" - both prefix and suffix
+                if file_str.startswith(prefix + '/'):
+                    remaining = file_str[len(prefix) + 1:]
+                    return fnmatch(Path(remaining).name, suffix) or fnmatch(remaining, '*/' + suffix)
+
+            return False
+
+        # For simple patterns, use fnmatch on both full path and filename
+        # This allows *.py to match both "main.py" and "dir/main.py"
+        return fnmatch(file_str, pattern) or fnmatch(file_name, pattern)
+
+    def get_file_priority(self, file_path: Path, lens_config: Dict = None) -> int:
+        """
+        Get the priority for a file based on the lens configuration.
+
+        v1.7.0: Priority Groups support for intelligent file ranking.
+
+        Args:
+            file_path: Path to the file (can be relative or absolute)
+            lens_config: Optional lens config dict. If None, uses active_lens_config.
+
+        Returns:
+            Integer priority value. Higher = more important.
+            Default is 50 if no groups defined or no match found.
+
+        Logic:
+            1. If lens has 'groups', iterate through them
+            2. Find ALL groups that match the file pattern
+            3. Return the HIGHEST priority among all matches
+            4. If no match, return fallback priority (default 50)
+            5. If no groups defined, return default priority 50 (backward compat)
+        """
+        config = lens_config or self.active_lens_config or {}
+
+        # Backward compatibility: no groups = all files equal priority
+        if "groups" not in config:
+            return 50
+
+        # Ensure we have a Path object
+        if not isinstance(file_path, Path):
+            file_path = Path(file_path)
+
+        # Find all matching groups and track highest priority
+        highest_priority = None
+
+        for group in config["groups"]:
+            pattern = group.get("pattern", "")
+            if not pattern:
+                continue
+
+            if self._match_pattern(file_path, pattern):
+                group_priority = group.get("priority", 50)
+                if highest_priority is None or group_priority > highest_priority:
+                    highest_priority = group_priority
+
+        # If matched, return highest priority found
+        if highest_priority is not None:
+            return highest_priority
+
+        # No match - use fallback priority (default 50)
+        fallback = config.get("fallback", {})
+        return fallback.get("priority", 50)
+
+    def get_file_group_config(self, file_path: Path, lens_config: Dict = None) -> Dict:
+        """
+        Get the group configuration for a file (priority + truncation settings).
+
+        v1.7.0: Returns the full group config for the highest-priority matching group.
+
+        Args:
+            file_path: Path to the file
+            lens_config: Optional lens config dict
+
+        Returns:
+            Dict with priority and optional truncate_mode/truncate settings.
+        """
+        config = lens_config or self.active_lens_config or {}
+
+        # Backward compatibility: no groups = use lens defaults
+        if "groups" not in config:
+            return {"priority": 50}
+
+        # Ensure we have a Path object
+        if not isinstance(file_path, Path):
+            file_path = Path(file_path)
+
+        # Find highest priority matching group
+        best_group = None
+        highest_priority = None
+
+        for group in config["groups"]:
+            pattern = group.get("pattern", "")
+            if not pattern:
+                continue
+
+            if self._match_pattern(file_path, pattern):
+                group_priority = group.get("priority", 50)
+                if highest_priority is None or group_priority > highest_priority:
+                    highest_priority = group_priority
+                    best_group = group
+
+        if best_group is not None:
+            return best_group
+
+        # No match - return fallback config
+        return config.get("fallback", {"priority": 50})
 
     def apply_lens(self, lens_name: str, base_config: Dict) -> Dict:
         """
