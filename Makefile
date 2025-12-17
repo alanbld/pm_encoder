@@ -1,4 +1,4 @@
-.PHONY: help test test-python test-rust test-cross coverage quality docs clean install-dev lint format check-format bootstrap
+.PHONY: help test test-python test-rust test-cross coverage quality docs clean install-dev lint format check-format bootstrap install-extras
 
 # Virtual environment auto-detection
 VENV := .venv
@@ -26,6 +26,19 @@ help: ## Show this help message
 
 bootstrap: ## Set up development environment with uv
 	@./scripts/bootstrap.sh
+
+install-extras: ## Install optional dependencies (tiktoken for precise token counting)
+	@echo "Installing optional dependencies..."
+	@if command -v uv >/dev/null 2>&1; then \
+		uv pip install tiktoken --quiet && \
+		echo "✅ tiktoken installed - precise token counting enabled"; \
+	elif [ -f $(VENV)/bin/pip ]; then \
+		$(VENV)/bin/pip install tiktoken --quiet && \
+		echo "✅ tiktoken installed - precise token counting enabled"; \
+	else \
+		pip install tiktoken --user --quiet && \
+		echo "✅ tiktoken installed - precise token counting enabled"; \
+	fi
 
 # Unified test target (both engines)
 test: test-python test-rust ## Run all tests (Python + Rust)
