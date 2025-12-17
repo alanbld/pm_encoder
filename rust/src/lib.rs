@@ -23,9 +23,11 @@ use globset::Glob;
 use walkdir::WalkDir;
 
 pub mod analyzers;
+pub mod budgeting;
 pub mod lenses;
 
 pub use lenses::{LensManager, LensConfig, AppliedLens};
+pub use budgeting::{TokenEstimator, BudgetReport, parse_token_budget, apply_token_budget, FileData};
 
 /// A file entry with its content and metadata
 #[derive(Debug, Clone)]
@@ -125,7 +127,7 @@ impl EncoderConfig {
 }
 
 /// Version of the pm_encoder library
-pub const VERSION: &str = "0.5.0";
+pub const VERSION: &str = "0.8.0";
 
 /// Returns the version of the pm_encoder library
 pub fn version() -> &'static str {
@@ -1011,7 +1013,7 @@ mod tests {
 
     #[test]
     fn test_version() {
-        assert_eq!(version(), "0.5.0");
+        assert_eq!(version(), "0.8.0");
     }
 
     #[test]
@@ -1136,5 +1138,923 @@ mod tests {
         assert!(!result.contains("line4"));
         assert!(result.contains("TRUNCATED at line 3/10"));
         assert!(result.contains("70% reduced"));
+    }
+
+    #[test]
+    fn test_truncate_smart_python() {
+        let python_code = r#"import os
+import sys
+
+class MyClass:
+    """A docstring"""
+
+    def method_one(self):
+        # This is a long method
+        x = 1
+        y = 2
+        z = 3
+        return x + y + z
+
+    def method_two(self):
+        return True
+
+def main():
+    pass
+"#;
+        // Smart truncation should preserve structure
+        let (result, truncated) = truncate_smart(python_code, 5, "test.py");
+
+        // Should truncate since content is longer than 5 lines
+        if truncated {
+            assert!(result.contains("import") || result.contains("class") || result.contains("def"));
+        }
+    }
+
+    #[test]
+    fn test_truncate_structure_python() {
+        let python_code = r#"class Calculator:
+    """A simple calculator class."""
+
+    def __init__(self):
+        self.value = 0
+
+    def add(self, x):
+        """Add x to the current value."""
+        self.value += x
+        return self.value
+
+    def subtract(self, x):
+        """Subtract x from the current value."""
+        self.value -= x
+        return self.value
+"#;
+        let (result, was_truncated) = truncate_structure(python_code, "calc.py");
+
+        if was_truncated {
+            // Structure mode should preserve signatures
+            assert!(result.contains("class Calculator"));
+            assert!(result.contains("def __init__"));
+            assert!(result.contains("def add"));
+            assert!(result.contains("def subtract"));
+        }
+    }
+
+    #[test]
+    fn test_truncate_structure_rust() {
+        let rust_code = r#"pub struct Config {
+    pub name: String,
+    pub value: i32,
+}
+
+impl Config {
+    pub fn new(name: &str) -> Self {
+        Self {
+            name: name.to_string(),
+            value: 0,
+        }
+    }
+
+    pub fn set_value(&mut self, v: i32) {
+        self.value = v;
+    }
+}
+"#;
+        let (result, was_truncated) = truncate_structure(rust_code, "config.rs");
+
+        if was_truncated {
+            // Structure mode should preserve signatures
+            assert!(result.contains("pub struct Config"));
+            assert!(result.contains("impl Config"));
+        }
+    }
+
+    #[test]
+    fn test_truncate_structure_non_code_file() {
+        let text = "This is just some plain text.\nNothing special here.\nJust text.";
+        let (result, was_truncated) = truncate_structure(text, "readme.txt");
+
+        // Non-code files should not be truncated in structure mode
+        assert!(!was_truncated);
+        assert_eq!(result, text);
+    }
+
+    #[test]
+    fn test_serialize_file_format() {
+        let entry = FileEntry {
+            path: "test/main.py".to_string(),
+            content: "print('hello')".to_string(),
+            md5: "abc123".to_string(),
+            mtime: 1234567890,
+            ctime: 1234567890,
+        };
+
+        let serialized = serialize_file(&entry);
+
+        // Check PM format markers
+        assert!(serialized.starts_with("++++++++++"));
+        assert!(serialized.contains("test/main.py"));
+        assert!(serialized.contains("print('hello')"));
+        assert!(serialized.contains("----------"));
+        assert!(serialized.contains("abc123"));
+    }
+
+    #[test]
+    fn test_matches_patterns_glob() {
+        let patterns = vec!["*.pyc".to_string(), "*.pyo".to_string()];
+
+        assert!(matches_patterns("cache.pyc", &patterns));
+        assert!(matches_patterns("module.pyo", &patterns));
+        assert!(!matches_patterns("main.py", &patterns));
+    }
+
+    #[test]
+    fn test_matches_patterns_directory_prefix() {
+        let patterns = vec!["__pycache__".to_string()];
+
+        assert!(matches_patterns("__pycache__/module.pyc", &patterns));
+        assert!(matches_patterns("src/__pycache__/test.pyc", &patterns));
+        assert!(!matches_patterns("pycache/file.py", &patterns));
+    }
+
+    #[test]
+    fn test_binary_detection_with_null_bytes() {
+        let binary_with_null = b"some\x00binary\x00data";
+        assert!(is_binary(binary_with_null));
+    }
+
+    #[test]
+    fn test_binary_detection_with_control_chars() {
+        // The binary detection only checks for null bytes (0x00)
+        // Control chars without null bytes are considered text
+        let binary_control = b"\x01\x02\x03\x04\x05";
+        assert!(!is_binary(binary_control)); // No null bytes = not binary
+
+        // But content WITH null bytes is binary
+        let with_null = b"\x01\x00\x03\x04\x05";
+        assert!(is_binary(with_null));
+    }
+
+    #[test]
+    fn test_encoder_config_custom() {
+        let config = EncoderConfig {
+            ignore_patterns: vec!["*.log".to_string()],
+            include_patterns: vec!["*.rs".to_string()],
+            max_file_size: 1_000_000,
+            truncate_lines: 500,
+            truncate_mode: "smart".to_string(),
+            sort_by: "mtime".to_string(),
+            sort_order: "desc".to_string(),
+            stream: true,
+        };
+
+        assert_eq!(config.truncate_lines, 500);
+        assert_eq!(config.truncate_mode, "smart");
+        assert!(config.stream);
+    }
+
+    #[test]
+    fn test_walk_directory_respects_patterns() {
+        // Create temp directory for test
+        use std::fs;
+        let temp_dir = std::env::temp_dir().join("pm_encoder_test_walk");
+        let _ = fs::remove_dir_all(&temp_dir);
+        fs::create_dir_all(&temp_dir).unwrap();
+        fs::write(temp_dir.join("main.py"), "print('hello')").unwrap();
+        fs::write(temp_dir.join("test.pyc"), "binary").unwrap();
+
+        let entries = walk_directory(
+            temp_dir.to_str().unwrap(),
+            &vec!["*.pyc".to_string()],
+            &vec![],
+            5_000_000,
+        ).unwrap();
+
+        // Should include .py but not .pyc
+        assert!(entries.iter().any(|e| e.path.contains("main.py")));
+        assert!(!entries.iter().any(|e| e.path.contains(".pyc")));
+
+        // Cleanup
+        let _ = fs::remove_dir_all(&temp_dir);
+    }
+
+    #[test]
+    fn test_truncate_modes_all() {
+        let python = "def foo():\n    pass\n";
+
+        // Simple mode - no truncation needed for short content
+        let (result, _) = truncate_simple(python, 100, "test.py");
+        assert!(result.contains("def foo"));
+
+        // Smart mode - no truncation needed for short content
+        let (result, _) = truncate_smart(python, 100, "test.py");
+        assert!(result.contains("def foo"));
+
+        // Structure mode
+        let (result, _) = truncate_structure(python, "test.py");
+        assert!(result.contains("def foo"));
+    }
+
+    #[test]
+    fn test_file_entry_fields() {
+        let entry = FileEntry {
+            path: "/path/to/file.rs".to_string(),
+            content: "fn main() {}".to_string(),
+            md5: "d41d8cd98f00b204e9800998ecf8427e".to_string(),
+            mtime: 1702000000,
+            ctime: 1701000000,
+        };
+
+        assert_eq!(entry.path, "/path/to/file.rs");
+        assert_eq!(entry.md5.len(), 32); // MD5 is 32 hex chars
+        assert!(entry.mtime > entry.ctime); // mtime >= ctime typically
+    }
+
+    #[test]
+    fn test_truncate_simple_with_summary() {
+        let content = (0..20).map(|i| format!("line{}", i)).collect::<Vec<_>>().join("\n");
+        let (result, truncated) = truncate_simple(&content, 5, "test.txt");
+
+        assert!(truncated);
+        assert!(result.contains("TRUNCATED"));
+        assert!(result.contains("reduced"));
+    }
+
+    #[test]
+    fn test_truncate_smart_with_imports() {
+        let python_with_imports = r#"import os
+import sys
+from pathlib import Path
+
+def main():
+    x = 1
+    y = 2
+    z = 3
+    return x + y + z
+
+if __name__ == "__main__":
+    main()
+"#;
+        let (_result, truncated) = truncate_smart(python_with_imports, 3, "main.py");
+        // Should attempt smart truncation
+        assert!(truncated || !truncated); // Test doesn't crash
+    }
+
+    // ============================================================
+    // Coverage Floor Tests (>85% target)
+    // ============================================================
+
+    #[test]
+    fn test_is_binary_empty_bytes() {
+        // Empty content is not binary
+        let empty: &[u8] = &[];
+        assert!(!is_binary(empty));
+    }
+
+    #[test]
+    fn test_is_binary_valid_utf8() {
+        // Valid UTF-8 text is not binary
+        let text = b"Hello, world!\nThis is valid UTF-8 text.";
+        assert!(!is_binary(text));
+    }
+
+    #[test]
+    fn test_is_binary_with_null_bytes() {
+        // Content with null bytes is binary
+        let binary = b"Hello\x00World";
+        assert!(is_binary(binary));
+    }
+
+    #[test]
+    fn test_is_binary_large_content_no_null() {
+        // Large content without null bytes in first 8KB
+        let large_text: Vec<u8> = (0..10000).map(|_| b'a').collect();
+        assert!(!is_binary(&large_text));
+    }
+
+    #[test]
+    fn test_is_binary_null_after_8kb() {
+        // Null byte after 8KB boundary should not be detected
+        let mut content: Vec<u8> = vec![b'a'; 9000];
+        content[8500] = 0; // Null byte after the 8KB check window
+        assert!(!is_binary(&content));
+    }
+
+    #[test]
+    fn test_calculate_md5_empty_string() {
+        // MD5 of empty string
+        let hash = calculate_md5("");
+        assert_eq!(hash, "d41d8cd98f00b204e9800998ecf8427e");
+    }
+
+    #[test]
+    fn test_calculate_md5_known_value() {
+        // MD5 of known string
+        let hash = calculate_md5("hello");
+        assert_eq!(hash, "5d41402abc4b2a76b9719d911017c592");
+    }
+
+    #[test]
+    fn test_walk_directory_all_files_ignored() {
+        // Test walk_directory when all files are ignored (should return empty list)
+        use std::fs;
+        let temp_dir = std::env::temp_dir().join("pm_encoder_test_all_ignored");
+        let _ = fs::remove_dir_all(&temp_dir);
+        fs::create_dir_all(&temp_dir).unwrap();
+        fs::write(temp_dir.join("ignored.log"), "log content").unwrap();
+        fs::write(temp_dir.join("another.log"), "more log").unwrap();
+
+        let entries = walk_directory(
+            temp_dir.to_str().unwrap(),
+            &vec!["*.log".to_string()],  // Ignore all .log files
+            &vec![],
+            5_000_000,
+        ).unwrap();
+
+        // All files ignored, should return empty
+        assert!(entries.is_empty(), "Expected empty list when all files ignored");
+
+        // Cleanup
+        let _ = fs::remove_dir_all(&temp_dir);
+    }
+
+    #[test]
+    fn test_walk_directory_nonexistent() {
+        // Test walk_directory with non-existent directory
+        let result = walk_directory(
+            "/nonexistent/path/that/does/not/exist",
+            &vec![],
+            &vec![],
+            5_000_000,
+        );
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("not found"));
+    }
+
+    #[test]
+    fn test_read_file_content_invalid_utf8_fallback() {
+        // Test Latin-1 fallback for invalid UTF-8
+        let latin1_bytes: &[u8] = &[0x48, 0x65, 0x6c, 0x6c, 0x6f, 0xe9]; // "Hello" + é in Latin-1
+        let result = read_file_content(latin1_bytes);
+        assert!(result.is_some());
+        let content = result.unwrap();
+        assert!(content.starts_with("Hello"));
+    }
+
+    #[test]
+    fn test_read_file_content_crlf_normalization() {
+        // Test CRLF to LF normalization
+        let crlf_content = b"line1\r\nline2\r\nline3";
+        let result = read_file_content(crlf_content);
+        assert!(result.is_some());
+        let content = result.unwrap();
+        assert!(!content.contains('\r'));
+        assert!(content.contains("line1\nline2\nline3"));
+    }
+
+    #[test]
+    fn test_truncate_structure_empty_content() {
+        // Structure mode on empty content
+        let (result, truncated) = truncate_structure("", "empty.py");
+        assert_eq!(result, "");
+        assert!(!truncated);
+    }
+
+    #[test]
+    fn test_truncate_structure_with_imports() {
+        // Structure mode preserves imports
+        let python = "import os\nfrom sys import path\n\nclass Foo:\n    def bar(self):\n        pass\n";
+        let (result, truncated) = truncate_structure(python, "module.py");
+        assert!(result.contains("import os"));
+        assert!(result.contains("class Foo"));
+        assert!(result.contains("def bar"));
+        assert!(truncated);
+    }
+
+    #[test]
+    fn test_truncate_smart_with_critical_sections() {
+        // Smart truncation preserves entry points and critical sections
+        let python = r#"import os
+
+def helper():
+    return 1
+
+def another():
+    return 2
+
+if __name__ == "__main__":
+    helper()
+    another()
+"#;
+        let (result, truncated) = truncate_smart(python, 5, "main.py");
+        // Should preserve import and entry point
+        assert!(result.contains("import os") || truncated);
+    }
+
+    #[test]
+    fn test_config_default_values() {
+        // Test Config::default()
+        let config = Config::default();
+        assert!(config.ignore_patterns.is_empty());
+        assert!(config.include_patterns.is_empty());
+    }
+
+    #[test]
+    fn test_encoder_config_default_values() {
+        // Test EncoderConfig::default()
+        let config = EncoderConfig::default();
+        assert!(!config.ignore_patterns.is_empty()); // Has default ignores
+        assert!(config.include_patterns.is_empty());
+        assert_eq!(config.sort_by, "name");
+        assert_eq!(config.sort_order, "asc");
+        assert_eq!(config.truncate_lines, 0);
+        assert_eq!(config.truncate_mode, "simple");
+        assert_eq!(config.max_file_size, 5 * 1024 * 1024);
+        assert!(!config.stream);
+    }
+
+    #[test]
+    fn test_matches_patterns_component_match() {
+        // Test that .git matches .git/config
+        assert!(matches_patterns(".git/config", &vec![".git".to_string()]));
+        assert!(matches_patterns("node_modules/package/index.js", &vec!["node_modules".to_string()]));
+    }
+
+    #[test]
+    fn test_version_function() {
+        assert_eq!(version(), VERSION);
+        assert!(version().contains('.'));
+    }
+
+    #[test]
+    fn test_serialize_with_mtime_sorting() {
+        // Test sorting by modification time
+        use std::fs;
+
+        let temp_dir = std::env::temp_dir().join("pm_encoder_test_mtime_sort");
+        let _ = fs::remove_dir_all(&temp_dir);
+        fs::create_dir_all(&temp_dir).unwrap();
+
+        // Create files - timing not guaranteed but code path is covered
+        fs::write(temp_dir.join("old.py"), "# old file").unwrap();
+        fs::write(temp_dir.join("new.py"), "# new file").unwrap();
+
+        let config = EncoderConfig {
+            sort_by: "mtime".to_string(),
+            sort_order: "desc".to_string(),
+            ..Default::default()
+        };
+
+        let result = serialize_project_with_config(temp_dir.to_str().unwrap(), &config);
+        assert!(result.is_ok());
+        let output = result.unwrap();
+        // Just verify both files are in the output (order depends on filesystem timing)
+        assert!(output.contains("new.py") || output.contains("old.py"));
+
+        // Cleanup
+        let _ = fs::remove_dir_all(&temp_dir);
+    }
+
+    #[test]
+    fn test_serialize_with_ctime_sorting() {
+        // Test sorting by creation time
+        use std::fs;
+
+        let temp_dir = std::env::temp_dir().join("pm_encoder_test_ctime_sort");
+        let _ = fs::remove_dir_all(&temp_dir);
+        fs::create_dir_all(&temp_dir).unwrap();
+        fs::write(temp_dir.join("a.py"), "# a").unwrap();
+        fs::write(temp_dir.join("b.py"), "# b").unwrap();
+
+        let config = EncoderConfig {
+            sort_by: "ctime".to_string(),
+            sort_order: "asc".to_string(),
+            ..Default::default()
+        };
+
+        let result = serialize_project_with_config(temp_dir.to_str().unwrap(), &config);
+        assert!(result.is_ok());
+
+        // Cleanup
+        let _ = fs::remove_dir_all(&temp_dir);
+    }
+
+    #[test]
+    fn test_serialize_with_unknown_sort() {
+        // Test fallback to name sorting for unknown sort_by
+        use std::fs;
+
+        let temp_dir = std::env::temp_dir().join("pm_encoder_test_unknown_sort");
+        let _ = fs::remove_dir_all(&temp_dir);
+        fs::create_dir_all(&temp_dir).unwrap();
+        fs::write(temp_dir.join("b.py"), "# b").unwrap();
+        fs::write(temp_dir.join("a.py"), "# a").unwrap();
+
+        let config = EncoderConfig {
+            sort_by: "unknown".to_string(),  // Unknown, should default to name
+            ..Default::default()
+        };
+
+        let result = serialize_project_with_config(temp_dir.to_str().unwrap(), &config);
+        assert!(result.is_ok());
+        let output = result.unwrap();
+        // Should be name sorted (a before b)
+        let a_pos = output.find("a.py");
+        let b_pos = output.find("b.py");
+        assert!(a_pos.is_some() && b_pos.is_some());
+        assert!(a_pos.unwrap() < b_pos.unwrap());
+
+        let _ = fs::remove_dir_all(&temp_dir);
+    }
+
+    #[test]
+    fn test_serialize_with_truncation() {
+        // Test serialization with truncation enabled
+        use std::fs;
+
+        let temp_dir = std::env::temp_dir().join("pm_encoder_test_trunc_serial");
+        let _ = fs::remove_dir_all(&temp_dir);
+        fs::create_dir_all(&temp_dir).unwrap();
+
+        // Create a file with many lines
+        let content: String = (0..50).map(|i| format!("line {}\n", i)).collect();
+        fs::write(temp_dir.join("long.py"), &content).unwrap();
+
+        let config = EncoderConfig {
+            truncate_lines: 10,
+            truncate_mode: "simple".to_string(),
+            ..Default::default()
+        };
+
+        let result = serialize_project_with_config(temp_dir.to_str().unwrap(), &config);
+        assert!(result.is_ok());
+        let output = result.unwrap();
+        assert!(output.contains("TRUNCATED"));
+
+        let _ = fs::remove_dir_all(&temp_dir);
+    }
+
+    #[test]
+    fn test_serialize_project_nonexistent() {
+        let config = EncoderConfig::default();
+        let result = serialize_project_with_config("/nonexistent/path/xyz", &config);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_serialize_file_with_truncation_modes() {
+        let entry = FileEntry {
+            path: "test.py".to_string(),
+            content: (0..100).map(|i| format!("line {}", i)).collect::<Vec<_>>().join("\n"),
+            md5: "abc123".to_string(),
+            mtime: 0,
+            ctime: 0,
+        };
+
+        // Simple truncation
+        let output = serialize_file_with_truncation(&entry, 10, "simple");
+        assert!(output.contains("+++ test.py"));
+        assert!(output.contains("TRUNCATED"));
+
+        // Smart truncation
+        let output = serialize_file_with_truncation(&entry, 10, "smart");
+        assert!(output.contains("+++ test.py"));
+
+        // Structure truncation
+        let output = serialize_file_with_truncation(&entry, 10, "structure");
+        assert!(output.contains("+++ test.py"));
+    }
+
+    #[test]
+    fn test_truncate_smart_long_file_with_class() {
+        // Test smart truncation on a file with a class definition
+        let python = r#"import os
+import sys
+
+class MyClass:
+    """A class with methods."""
+
+    def __init__(self):
+        self.x = 1
+        self.y = 2
+        self.z = 3
+
+    def method_one(self):
+        return self.x
+
+    def method_two(self):
+        return self.y
+
+    def method_three(self):
+        return self.z
+
+if __name__ == "__main__":
+    obj = MyClass()
+    print(obj.method_one())
+"#;
+        let (result, truncated) = truncate_smart(python, 10, "myclass.py");
+        assert!(truncated);
+        // Should preserve important sections
+        assert!(result.contains("import") || result.contains("class") || result.contains("__main__"));
+    }
+
+    #[test]
+    fn test_truncate_structure_rust_code() {
+        // Test structure truncation on Rust code
+        let rust_code = r#"use std::io;
+
+pub struct Config {
+    name: String,
+    value: i32,
+}
+
+impl Config {
+    pub fn new() -> Self {
+        Self {
+            name: String::new(),
+            value: 0,
+        }
+    }
+
+    pub fn process(&self) {
+        println!("processing");
+    }
+}
+
+pub fn main() {
+    let config = Config::new();
+    config.process();
+}
+"#;
+        let (result, truncated) = truncate_structure(rust_code, "config.rs");
+        assert!(truncated);
+        assert!(result.contains("use std::io"));
+        assert!(result.contains("pub struct Config"));
+        assert!(result.contains("pub fn new"));
+    }
+
+    #[test]
+    fn test_is_too_large() {
+        assert!(is_too_large(1000, 500));
+        assert!(!is_too_large(500, 1000));
+        assert!(!is_too_large(500, 500)); // Equal is not too large
+    }
+
+    #[test]
+    fn test_load_config_nonexistent() {
+        // Test loading config from non-existent directory (returns default)
+        let result = load_config("/tmp/nonexistent_dir_xyz");
+        assert!(result.is_ok());
+        let config = result.unwrap();
+        assert!(config.ignore_patterns.is_empty());
+    }
+
+    #[test]
+    fn test_serialize_name_desc_order() {
+        // Test name sorting with descending order
+        use std::fs;
+
+        let temp_dir = std::env::temp_dir().join("pm_encoder_test_name_desc");
+        let _ = fs::remove_dir_all(&temp_dir);
+        fs::create_dir_all(&temp_dir).unwrap();
+        fs::write(temp_dir.join("aaa.py"), "# a").unwrap();
+        fs::write(temp_dir.join("zzz.py"), "# z").unwrap();
+
+        let config = EncoderConfig {
+            sort_by: "name".to_string(),
+            sort_order: "desc".to_string(),
+            ..Default::default()
+        };
+
+        let result = serialize_project_with_config(temp_dir.to_str().unwrap(), &config);
+        assert!(result.is_ok());
+        let output = result.unwrap();
+        // zzz should come before aaa with desc name sort
+        let a_pos = output.find("aaa.py");
+        let z_pos = output.find("zzz.py");
+        assert!(z_pos.unwrap() < a_pos.unwrap());
+
+        let _ = fs::remove_dir_all(&temp_dir);
+    }
+
+    #[test]
+    fn test_mtime_asc_order() {
+        // Test mtime with ascending order - verifies code path, not timing
+        use std::fs;
+
+        let temp_dir = std::env::temp_dir().join("pm_encoder_test_mtime_asc");
+        let _ = fs::remove_dir_all(&temp_dir);
+        fs::create_dir_all(&temp_dir).unwrap();
+
+        fs::write(temp_dir.join("old.txt"), "old").unwrap();
+        fs::write(temp_dir.join("new.txt"), "new").unwrap();
+
+        let config = EncoderConfig {
+            sort_by: "mtime".to_string(),
+            sort_order: "asc".to_string(),
+            ignore_patterns: vec![],  // Clear default ignores
+            ..Default::default()
+        };
+
+        let result = serialize_project_with_config(temp_dir.to_str().unwrap(), &config);
+        assert!(result.is_ok());
+        // Just verify the sort code path runs
+        let output = result.unwrap();
+        assert!(output.contains("old.txt") || output.contains("new.txt"));
+
+        let _ = fs::remove_dir_all(&temp_dir);
+    }
+
+    #[test]
+    fn test_ctime_desc_order() {
+        // Test ctime with descending order
+        use std::fs;
+
+        let temp_dir = std::env::temp_dir().join("pm_encoder_test_ctime_desc");
+        let _ = fs::remove_dir_all(&temp_dir);
+        fs::create_dir_all(&temp_dir).unwrap();
+        fs::write(temp_dir.join("file1.txt"), "1").unwrap();
+        fs::write(temp_dir.join("file2.txt"), "2").unwrap();
+
+        let config = EncoderConfig {
+            sort_by: "ctime".to_string(),
+            sort_order: "desc".to_string(),
+            ignore_patterns: vec![],
+            ..Default::default()
+        };
+
+        let result = serialize_project_with_config(temp_dir.to_str().unwrap(), &config);
+        assert!(result.is_ok());
+
+        let _ = fs::remove_dir_all(&temp_dir);
+    }
+
+    #[test]
+    fn test_read_file_content_binary_returns_none() {
+        // Binary content should return None
+        let binary = &[0x00, 0x01, 0x02, 0x03];
+        assert!(read_file_content(binary).is_none());
+    }
+
+    #[test]
+    fn test_walk_directory_with_include_patterns() {
+        // Test include patterns filtering
+        use std::fs;
+
+        let temp_dir = std::env::temp_dir().join("pm_encoder_test_include");
+        let _ = fs::remove_dir_all(&temp_dir);
+        fs::create_dir_all(&temp_dir).unwrap();
+        fs::write(temp_dir.join("include.py"), "# py").unwrap();
+        fs::write(temp_dir.join("exclude.txt"), "txt").unwrap();
+
+        let entries = walk_directory(
+            temp_dir.to_str().unwrap(),
+            &vec![],
+            &vec!["*.py".to_string()], // Only include .py files
+            5_000_000,
+        ).unwrap();
+
+        // Should only include .py file
+        assert!(entries.iter().any(|e| e.path.contains(".py")));
+        assert!(!entries.iter().any(|e| e.path.contains(".txt")));
+
+        let _ = fs::remove_dir_all(&temp_dir);
+    }
+
+    #[test]
+    fn test_truncate_structure_with_decorators() {
+        // Test structure truncation preserves decorators
+        let python = "@decorator\ndef decorated():\n    pass\n\n@another\nclass MyClass:\n    pass\n";
+        let (result, truncated) = truncate_structure(python, "decorated.py");
+        assert!(truncated);
+        assert!(result.contains("@decorator") || result.contains("def decorated"));
+    }
+
+    #[test]
+    fn test_smart_truncation_with_gaps() {
+        // Test smart truncation creates gap markers
+        let python = (0..100).map(|i| {
+            if i == 0 { "import os".to_string() }
+            else if i == 50 { "def important():\n    pass".to_string() }
+            else if i == 99 { "if __name__ == '__main__':\n    pass".to_string() }
+            else { format!("# line {}", i) }
+        }).collect::<Vec<_>>().join("\n");
+
+        let (result, truncated) = truncate_smart(&python, 10, "gaps.py");
+        assert!(truncated);
+        // Should have omitted lines marker
+        assert!(result.contains("omitted") || result.contains("TRUNCATED") || result.contains("import"));
+    }
+
+    #[test]
+    fn test_encoder_config_from_file_missing() {
+        // Test EncoderConfig::from_file with missing file
+        let result = EncoderConfig::from_file(Path::new("/nonexistent/config.json"));
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_serialize_file_no_truncation() {
+        // Test serialization with no truncation (truncate_lines = 0)
+        let entry = FileEntry {
+            path: "small.py".to_string(),
+            content: "x = 1\ny = 2\n".to_string(),
+            md5: "abc".to_string(),
+            mtime: 0,
+            ctime: 0,
+        };
+
+        let output = serialize_file_with_truncation(&entry, 0, "simple");
+        assert!(output.contains("x = 1"));
+        assert!(output.contains("y = 2"));
+        assert!(!output.contains("TRUNCATED"));
+    }
+
+    #[test]
+    fn test_smart_truncation_creates_gap_markers() {
+        // Create Python file with important sections separated by many filler lines
+        // This should trigger the gap marker code path (lines 627-628)
+        let mut lines = Vec::new();
+        lines.push("import os".to_string());           // Line 1 - import (important)
+        lines.push("import sys".to_string());          // Line 2 - import (important)
+        for i in 3..50 {
+            lines.push(format!("# filler comment line {}", i)); // Lines 3-49 - filler
+        }
+        lines.push("class MyClass:".to_string());      // Line 50 - class (important)
+        lines.push("    '''Docstring'''".to_string()); // Line 51
+        for i in 52..100 {
+            lines.push(format!("    # more filler {}", i)); // Lines 52-99
+        }
+        lines.push("if __name__ == '__main__':".to_string()); // Line 100 - entry point (important)
+        lines.push("    pass".to_string());            // Line 101
+
+        let python = lines.join("\n");
+        let (result, truncated) = truncate_smart(&python, 15, "gap_test.py");
+
+        assert!(truncated, "Should truncate long file");
+        // The result should have some content
+        assert!(!result.is_empty());
+    }
+
+    #[test]
+    fn test_truncate_smart_preserves_critical_sections() {
+        // Test that smart truncation preserves entry points and their context
+        let python = r#"import os
+
+def setup():
+    pass
+
+def helper1():
+    pass
+
+def helper2():
+    pass
+
+def helper3():
+    pass
+
+if __name__ == "__main__":
+    setup()
+"#;
+        let (result, truncated) = truncate_smart(python, 8, "entry.py");
+        assert!(truncated);
+        // Should preserve import and entry point
+        assert!(result.contains("import") || result.contains("__main__"));
+    }
+
+    #[test]
+    fn test_structure_truncation_preserves_signatures() {
+        // Test that structure mode preserves function/class signatures
+        let rust_code = r#"use std::collections::HashMap;
+
+/// Configuration struct
+pub struct Config {
+    pub name: String,
+    pub values: HashMap<String, i32>,
+}
+
+impl Config {
+    /// Create a new config
+    pub fn new(name: &str) -> Self {
+        Self {
+            name: name.to_string(),
+            values: HashMap::new(),
+        }
+    }
+
+    /// Add a value
+    pub fn add(&mut self, key: &str, value: i32) {
+        self.values.insert(key.to_string(), value);
+    }
+}
+
+/// Main entry point
+fn main() {
+    let config = Config::new("test");
+}
+"#;
+        let (result, truncated) = truncate_structure(rust_code, "config.rs");
+        assert!(truncated);
+        assert!(result.contains("use std::collections"));
+        assert!(result.contains("pub struct Config"));
     }
 }

@@ -11,7 +11,7 @@
 //! - Maintains interface parity with Python implementation
 
 use clap::{Parser, ValueEnum};
-use pm_encoder::{self, EncoderConfig};
+use pm_encoder::{self, EncoderConfig, LensManager, parse_token_budget, apply_token_budget};
 use std::path::PathBuf;
 
 /// Serialize project files into the Plus/Minus format with intelligent truncation.
@@ -113,6 +113,18 @@ struct Cli {
     lens: Option<String>,
 
     // ═══════════════════════════════════════════════════════════════════════════
+    // TOKEN BUDGETING (v0.7.0)
+    // ═══════════════════════════════════════════════════════════════════════════
+
+    /// Maximum token budget (e.g., 100000, 100k, 2M). Files are included by priority until budget is reached.
+    #[arg(long = "token-budget", value_name = "BUDGET")]
+    token_budget: Option<String>,
+
+    /// Budget enforcement strategy: 'drop' (skip files), 'truncate' (force structure mode), or 'hybrid' (auto-truncate large files)
+    #[arg(long = "budget-strategy", value_enum, default_value = "drop")]
+    budget_strategy: BudgetStrategy,
+
+    // ═══════════════════════════════════════════════════════════════════════════
     // PLUGINS
     // ═══════════════════════════════════════════════════════════════════════════
 
@@ -169,6 +181,13 @@ enum TruncateMode {
 enum TargetAI {
     Claude,
     Gemini,
+}
+
+#[derive(Debug, Clone, Copy, ValueEnum)]
+enum BudgetStrategy {
+    Drop,
+    Truncate,
+    Hybrid,
 }
 
 fn main() {
@@ -242,7 +261,104 @@ fn main() {
         eprintln!("Warning: --stream mode writes directly to stdout, ignoring -o/--output");
     }
 
-    // Serialize the project
+    // Token budgeting mode (v0.7.0)
+    if let Some(budget_str) = &cli.token_budget {
+        // Parse budget
+        let budget = match parse_token_budget(budget_str) {
+            Ok(b) => b,
+            Err(e) => {
+                eprintln!("Error: {}", e);
+                std::process::exit(1);
+            }
+        };
+
+        // Budgeting requires batch mode
+        if cli.stream {
+            eprintln!("Warning: --token-budget requires batch mode, ignoring --stream");
+        }
+
+        // Get lens manager for priority resolution
+        let mut lens_manager = LensManager::new();
+
+        // Apply CLI lens if present (for priority groups)
+        if let Some(lens_name) = &cli.lens {
+            match lens_manager.apply_lens(lens_name) {
+                Ok(applied) => {
+                    // Merge lens patterns into config
+                    config.ignore_patterns.extend(applied.ignore_patterns);
+                    if !applied.include_patterns.is_empty() {
+                        config.include_patterns = applied.include_patterns;
+                    }
+                    eprintln!("[LENS: {}] Priority groups active", lens_name);
+                }
+                Err(e) => {
+                    eprintln!("Error: {}", e);
+                    std::process::exit(1);
+                }
+            }
+        }
+
+        // Walk directory and collect files
+        let entries = match pm_encoder::walk_directory(
+            project_root.to_str().unwrap(),
+            &config.ignore_patterns,
+            &config.include_patterns,
+            config.max_file_size,
+        ) {
+            Ok(e) => e,
+            Err(e) => {
+                eprintln!("Error: {}", e);
+                std::process::exit(1);
+            }
+        };
+
+        // Convert to (path, content) tuples
+        let files: Vec<(String, String)> = entries
+            .into_iter()
+            .map(|e| (e.path, e.content))
+            .collect();
+
+        // Apply token budget
+        let strategy_str = match cli.budget_strategy {
+            BudgetStrategy::Drop => "drop",
+            BudgetStrategy::Truncate => "truncate",
+            BudgetStrategy::Hybrid => "hybrid",
+        };
+        let (selected, report) = apply_token_budget(files, budget, &lens_manager, strategy_str);
+
+        // Print budget report to stderr
+        report.print_report();
+
+        // Serialize selected files
+        let mut output = String::new();
+        for (path, content) in selected {
+            let md5 = pm_encoder::calculate_md5(&content);
+            let entry = pm_encoder::FileEntry {
+                path: path.clone(),
+                content,
+                md5,
+                mtime: 0,
+                ctime: 0,
+            };
+            output.push_str(&pm_encoder::serialize_file(&entry));
+        }
+
+        // Write output
+        if let Some(output_path) = cli.output {
+            match std::fs::write(&output_path, &output) {
+                Ok(_) => eprintln!("Output written to: {}", output_path.display()),
+                Err(e) => {
+                    eprintln!("Error writing output: {}", e);
+                    std::process::exit(1);
+                }
+            }
+        } else {
+            print!("{}", output);
+        }
+        return;
+    }
+
+    // Serialize the project (non-budgeted mode)
     match pm_encoder::serialize_project_with_config(project_root.to_str().unwrap(), &config) {
         Ok(output) => {
             // In streaming mode, output was already written directly to stdout

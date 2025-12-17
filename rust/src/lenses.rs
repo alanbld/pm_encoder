@@ -585,4 +585,401 @@ mod tests {
         // Should return 80 (highest)
         assert_eq!(manager.get_file_priority(Path::new("src/main.py")), 80);
     }
+
+    #[test]
+    fn test_all_builtin_lenses_have_required_fields() {
+        let manager = LensManager::new();
+        let lens_names = vec!["architecture", "debug", "security", "onboarding"];
+
+        for name in lens_names {
+            let lens = manager.get_lens(name);
+            assert!(lens.is_some(), "Lens '{}' should exist", name);
+            let lens = lens.unwrap();
+            assert!(!lens.description.is_empty(), "Lens '{}' should have description", name);
+        }
+    }
+
+    #[test]
+    fn test_architecture_lens_excludes_tests() {
+        let manager = LensManager::new();
+        let arch_lens = manager.get_lens("architecture").unwrap();
+
+        // Architecture lens should exclude tests
+        assert!(arch_lens.exclude.iter().any(|p| p.contains("tests")));
+        assert!(arch_lens.exclude.iter().any(|p| p.contains("docs")));
+    }
+
+    #[test]
+    fn test_architecture_lens_includes_code_files() {
+        let manager = LensManager::new();
+        let arch_lens = manager.get_lens("architecture").unwrap();
+
+        // Architecture lens should include code files
+        assert!(arch_lens.include.iter().any(|p| p.contains(".py")));
+        assert!(arch_lens.include.iter().any(|p| p.contains(".rs")));
+        assert!(arch_lens.include.iter().any(|p| p.contains(".json")));
+    }
+
+    #[test]
+    fn test_load_custom_lens() {
+        let mut manager = LensManager::new();
+
+        let mut custom_lenses = std::collections::HashMap::new();
+        custom_lenses.insert("myproject".to_string(), LensConfig {
+            description: "My custom project lens".to_string(),
+            groups: vec![
+                PriorityGroup {
+                    pattern: "*.rs".to_string(),
+                    priority: 100,
+                    truncate_mode: None,
+                    truncate: None,
+                },
+            ],
+            fallback: Some(FallbackConfig { priority: 25 }),
+            ..Default::default()
+        });
+
+        manager.load_custom(custom_lenses);
+
+        // Custom lens should be available
+        assert!(manager.get_lens("myproject").is_some());
+        assert!(manager.available_lenses().contains(&"myproject".to_string()));
+    }
+
+    #[test]
+    fn test_custom_lens_overrides_builtin() {
+        let mut manager = LensManager::new();
+
+        let mut custom_lenses = std::collections::HashMap::new();
+        custom_lenses.insert("architecture".to_string(), LensConfig {
+            description: "Custom architecture override".to_string(),
+            ..Default::default()
+        });
+
+        manager.load_custom(custom_lenses);
+
+        // Custom should override built-in
+        let lens = manager.get_lens("architecture").unwrap();
+        assert_eq!(lens.description, "Custom architecture override");
+    }
+
+    #[test]
+    fn test_applied_lens_fields() {
+        let mut manager = LensManager::new();
+        let applied = manager.apply_lens("architecture").unwrap();
+
+        assert_eq!(applied.name, "architecture");
+        assert!(!applied.description.is_empty());
+        assert!(!applied.ignore_patterns.is_empty());
+        assert!(!applied.include_patterns.is_empty());
+        assert!(applied.truncate_lines > 0); // Architecture has truncation
+    }
+
+    #[test]
+    fn test_pattern_exact_filename() {
+        // Exact filename patterns
+        assert!(LensManager::match_pattern(Path::new("Makefile"), "Makefile"));
+        assert!(LensManager::match_pattern(Path::new("README.md"), "README.md"));
+        assert!(!LensManager::match_pattern(Path::new("README.txt"), "README.md"));
+    }
+
+    #[test]
+    fn test_pattern_no_match() {
+        // Patterns that shouldn't match
+        assert!(!LensManager::match_pattern(Path::new("main.py"), "*.js"));
+        assert!(!LensManager::match_pattern(Path::new("lib.rs"), "*.py"));
+        assert!(!LensManager::match_pattern(Path::new("foo/bar.txt"), "baz/**"));
+    }
+
+    #[test]
+    fn test_simple_match_function() {
+        // Test the simple_match helper directly
+        assert!(LensManager::simple_match("main.py", "*.py"));
+        assert!(LensManager::simple_match("test.rs", "*.rs"));
+        assert!(!LensManager::simple_match("main.py", "*.rs"));
+        assert!(LensManager::simple_match("Makefile", "Makefile"));
+    }
+
+    #[test]
+    fn test_priority_fallback_default() {
+        let manager = LensManager::new();
+        // Without active lens, should return default 50
+        assert_eq!(manager.get_file_priority(Path::new("any_file.xyz")), 50);
+    }
+
+    #[test]
+    fn test_priority_with_custom_groups() {
+        let mut manager = LensManager::new();
+
+        let lens = LensConfig {
+            description: "Test".to_string(),
+            groups: vec![
+                PriorityGroup {
+                    pattern: "*.py".to_string(),
+                    priority: 90,
+                    truncate_mode: Some("structure".to_string()),
+                    truncate: Some(500),
+                },
+            ],
+            fallback: Some(FallbackConfig { priority: 40 }),
+            ..Default::default()
+        };
+
+        manager.custom.insert("test".to_string(), lens);
+        let _ = manager.apply_lens("test");
+
+        // .py file should get priority 90
+        assert_eq!(manager.get_file_priority(Path::new("main.py")), 90);
+        // .rs file should get fallback priority 40
+        assert_eq!(manager.get_file_priority(Path::new("main.rs")), 40);
+    }
+
+    #[test]
+    fn test_debug_lens_has_no_truncation() {
+        let manager = LensManager::new();
+        let debug_lens = manager.get_lens("debug").unwrap();
+
+        // Debug lens should have no truncation (full content)
+        assert_eq!(debug_lens.truncate, Some(0));
+    }
+
+    #[test]
+    fn test_security_lens_focuses_on_sensitive_patterns() {
+        let manager = LensManager::new();
+        let security_lens = manager.get_lens("security").unwrap();
+
+        // Security lens should include patterns for config/env files
+        let includes = &security_lens.include;
+        assert!(includes.iter().any(|p| p.contains("config") || p.contains(".json") || p.contains(".yaml")));
+    }
+
+    #[test]
+    fn test_lens_config_default() {
+        let default_config = LensConfig::default();
+        assert!(default_config.description.is_empty());
+        assert!(default_config.exclude.is_empty());
+        assert!(default_config.include.is_empty());
+        assert!(default_config.groups.is_empty());
+        assert!(default_config.fallback.is_none());
+    }
+
+    #[test]
+    fn test_fallback_config_default_priority() {
+        // When using serde default, priority should be 50
+        let fallback = FallbackConfig { priority: default_priority() };
+        assert_eq!(fallback.priority, 50);
+    }
+
+    #[test]
+    fn test_default_priority_function() {
+        assert_eq!(default_priority(), 50);
+    }
+
+    // ============================================================
+    // Coverage Floor Tests (>85% target)
+    // ============================================================
+
+    #[test]
+    fn test_apply_lens_with_empty_patterns() {
+        // Test apply_lens on a lens with no include/exclude patterns
+        let mut manager = LensManager::new();
+
+        // Create a minimal lens with no patterns
+        let minimal_lens = LensConfig {
+            description: "Minimal test lens".to_string(),
+            exclude: vec![],
+            include: vec![],
+            sort_by: None,
+            sort_order: None,
+            truncate: None,
+            truncate_mode: None,
+            groups: vec![],
+            fallback: None,
+        };
+
+        manager.custom.insert("minimal".to_string(), minimal_lens);
+        let applied = manager.apply_lens("minimal").unwrap();
+
+        assert_eq!(applied.name, "minimal");
+        assert!(applied.ignore_patterns.is_empty());
+        assert!(applied.include_patterns.is_empty());
+        assert_eq!(applied.sort_by, "name"); // Default
+        assert_eq!(applied.sort_order, "asc"); // Default
+        assert_eq!(applied.truncate_lines, 0); // Default
+    }
+
+    #[test]
+    fn test_apply_lens_nonexistent() {
+        // Test apply_lens with non-existent lens name
+        let mut manager = LensManager::new();
+        let result = manager.apply_lens("nonexistent_lens_xyz");
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("Unknown lens"));
+    }
+
+    #[test]
+    fn test_lens_manager_new_empty_state() {
+        // Test LensManager::new() initial state
+        let manager = LensManager::new();
+        assert!(manager.active_lens.is_none());
+        assert!(manager.custom.is_empty());
+        // Built-in lenses should exist
+        assert!(manager.get_lens("architecture").is_some());
+        assert!(manager.get_lens("debug").is_some());
+        assert!(manager.get_lens("security").is_some());
+        assert!(manager.get_lens("onboarding").is_some());
+    }
+
+    #[test]
+    fn test_print_manifest_architecture() {
+        // Test print_manifest doesn't panic
+        let manager = LensManager::new();
+        // This prints to stderr, just verify it doesn't panic
+        manager.print_manifest("architecture");
+    }
+
+    #[test]
+    fn test_print_manifest_nonexistent() {
+        // Test print_manifest with non-existent lens
+        let manager = LensManager::new();
+        // Should not panic, just does nothing
+        manager.print_manifest("nonexistent_lens");
+    }
+
+    #[test]
+    fn test_print_manifest_debug() {
+        // Debug lens has truncate: 0
+        let manager = LensManager::new();
+        manager.print_manifest("debug");
+    }
+
+    #[test]
+    fn test_get_file_priority_no_active_lens() {
+        // Without active lens, should return default 50
+        let manager = LensManager::new();
+        assert_eq!(manager.get_file_priority(Path::new("anything.py")), 50);
+        assert_eq!(manager.get_file_priority(Path::new("tests/test.py")), 50);
+    }
+
+    #[test]
+    fn test_get_file_priority_with_multiple_matching_groups() {
+        // Test that highest priority wins when multiple groups match
+        let mut manager = LensManager::new();
+
+        let lens = LensConfig {
+            description: "Multi-match test".to_string(),
+            groups: vec![
+                PriorityGroup {
+                    pattern: "*.py".to_string(),
+                    priority: 60,
+                    truncate_mode: None,
+                    truncate: None,
+                },
+                PriorityGroup {
+                    pattern: "src/**/*.py".to_string(),
+                    priority: 90, // Higher priority for src/
+                    truncate_mode: None,
+                    truncate: None,
+                },
+            ],
+            fallback: Some(FallbackConfig { priority: 30 }),
+            ..Default::default()
+        };
+
+        manager.custom.insert("multi".to_string(), lens);
+        let _ = manager.apply_lens("multi");
+
+        // src/main.py matches both patterns, should get 90 (highest)
+        assert_eq!(manager.get_file_priority(Path::new("src/main.py")), 90);
+
+        // root.py only matches *.py, should get 60
+        assert_eq!(manager.get_file_priority(Path::new("root.py")), 60);
+
+        // README.md matches nothing, should get fallback 30
+        assert_eq!(manager.get_file_priority(Path::new("README.md")), 30);
+    }
+
+    #[test]
+    fn test_match_pattern_recursive_glob() {
+        // Test **/ recursive pattern matching
+        assert!(LensManager::match_pattern(Path::new("src/lib/utils.py"), "src/**/*.py"));
+        assert!(LensManager::match_pattern(Path::new("tests/unit/test_core.py"), "tests/**/*.py"));
+        assert!(!LensManager::match_pattern(Path::new("docs/readme.md"), "tests/**/*.py"));
+    }
+
+    #[test]
+    fn test_match_pattern_directory_prefix() {
+        // Test directory/ prefix patterns
+        assert!(LensManager::match_pattern(Path::new("tests/test_main.py"), "tests/**"));
+        assert!(LensManager::match_pattern(Path::new("src/module/file.rs"), "src/**"));
+    }
+
+    #[test]
+    fn test_applied_lens_all_fields() {
+        // Test all fields of AppliedLens
+        let mut manager = LensManager::new();
+
+        let lens = LensConfig {
+            description: "Full test".to_string(),
+            exclude: vec!["*.log".to_string()],
+            include: vec!["*.py".to_string()],
+            sort_by: Some("mtime".to_string()),
+            sort_order: Some("desc".to_string()),
+            truncate: Some(100),
+            truncate_mode: Some("smart".to_string()),
+            groups: vec![],
+            fallback: None,
+        };
+
+        manager.custom.insert("full".to_string(), lens);
+        let applied = manager.apply_lens("full").unwrap();
+
+        assert_eq!(applied.name, "full");
+        assert_eq!(applied.description, "Full test");
+        assert_eq!(applied.ignore_patterns, vec!["*.log".to_string()]);
+        assert_eq!(applied.include_patterns, vec!["*.py".to_string()]);
+        assert_eq!(applied.sort_by, "mtime");
+        assert_eq!(applied.sort_order, "desc");
+        assert_eq!(applied.truncate_lines, 100);
+        assert_eq!(applied.truncate_mode, "smart");
+    }
+
+    #[test]
+    fn test_load_custom_overwrites_existing() {
+        // Test that load_custom properly overwrites
+        let mut manager = LensManager::new();
+
+        let mut custom1 = std::collections::HashMap::new();
+        custom1.insert("test".to_string(), LensConfig {
+            description: "First".to_string(),
+            ..Default::default()
+        });
+        manager.load_custom(custom1);
+
+        let mut custom2 = std::collections::HashMap::new();
+        custom2.insert("test".to_string(), LensConfig {
+            description: "Second".to_string(),
+            ..Default::default()
+        });
+        manager.load_custom(custom2);
+
+        let lens = manager.get_lens("test").unwrap();
+        assert_eq!(lens.description, "Second");
+    }
+
+    #[test]
+    fn test_priority_group_with_truncate_overrides() {
+        // Test PriorityGroup with truncate_mode and truncate fields
+        let group = PriorityGroup {
+            pattern: "tests/**".to_string(),
+            priority: 20,
+            truncate_mode: Some("structure".to_string()),
+            truncate: Some(50),
+        };
+
+        assert_eq!(group.pattern, "tests/**");
+        assert_eq!(group.priority, 20);
+        assert_eq!(group.truncate_mode, Some("structure".to_string()));
+        assert_eq!(group.truncate, Some(50));
+    }
 }
