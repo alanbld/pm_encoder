@@ -125,22 +125,6 @@ struct Cli {
     budget_strategy: BudgetStrategy,
 
     // ═══════════════════════════════════════════════════════════════════════════
-    // PLUGINS
-    // ═══════════════════════════════════════════════════════════════════════════
-
-    /// Custom language analyzer plugins directory
-    #[arg(long = "language-plugins", value_name = "DIR")]
-    language_plugins: Option<PathBuf>,
-
-    /// Generate a plugin template for LANGUAGE and exit
-    #[arg(long = "create-plugin", value_name = "LANGUAGE")]
-    create_plugin: Option<String>,
-
-    /// Generate an AI prompt to create a plugin for LANGUAGE and exit
-    #[arg(long = "plugin-prompt", value_name = "LANGUAGE")]
-    plugin_prompt: Option<String>,
-
-    // ═══════════════════════════════════════════════════════════════════════════
     // INIT
     // ═══════════════════════════════════════════════════════════════════════════
 
@@ -259,6 +243,30 @@ fn main() {
     // Streaming mode warning for file output
     if cli.stream && cli.output.is_some() {
         eprintln!("Warning: --stream mode writes directly to stdout, ignoring -o/--output");
+    }
+
+    // Init-prompt mode (v0.9.0) - Generate CLAUDE.md/GEMINI_INSTRUCTIONS.txt + CONTEXT.txt
+    if cli.init_prompt {
+        let target_str = match cli.target {
+            TargetAI::Claude => "claude",
+            TargetAI::Gemini => "gemini",
+        };
+
+        match pm_encoder::init::init_prompt(
+            project_root.to_str().unwrap(),
+            &cli.init_lens,
+            target_str,
+        ) {
+            Ok((instruction_path, context_path)) => {
+                eprintln!("Generated: {}", instruction_path);
+                eprintln!("Generated: {}", context_path);
+            }
+            Err(e) => {
+                eprintln!("Error: {}", e);
+                std::process::exit(1);
+            }
+        }
+        return;
     }
 
     // Token budgeting mode (v0.7.0)

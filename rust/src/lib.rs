@@ -24,6 +24,7 @@ use walkdir::WalkDir;
 
 pub mod analyzers;
 pub mod budgeting;
+pub mod init;
 pub mod lenses;
 
 pub use lenses::{LensManager, LensConfig, AppliedLens};
@@ -83,6 +84,12 @@ pub struct EncoderConfig {
     pub max_file_size: u64,
     /// Enable streaming mode (immediate output, no global sort)
     pub stream: bool,
+    /// Include summary markers in truncated output (default: true)
+    pub truncate_summary: bool,
+    /// Patterns of files to skip truncation for
+    pub truncate_exclude: Vec<String>,
+    /// Show truncation statistics report
+    pub truncate_stats: bool,
 }
 
 impl Default for EncoderConfig {
@@ -104,6 +111,9 @@ impl Default for EncoderConfig {
             truncate_mode: "simple".to_string(),
             max_file_size: 5 * 1024 * 1024, // 5MB
             stream: false, // Default to batch mode for backward compatibility
+            truncate_summary: true, // Include summary markers by default
+            truncate_exclude: vec![], // No files excluded by default
+            truncate_stats: false, // Don't show stats report by default
         }
     }
 }
@@ -516,6 +526,27 @@ pub fn walk_directory(
 ///
 /// * `(truncated_content, was_truncated)` - The truncated content and whether truncation occurred
 pub fn truncate_simple(content: &str, max_lines: usize, file_path: &str) -> (String, bool) {
+    truncate_simple_with_options(content, max_lines, file_path, true)
+}
+
+/// Truncate content to a maximum number of lines with options
+///
+/// # Arguments
+///
+/// * `content` - The content to truncate
+/// * `max_lines` - Maximum number of lines to keep
+/// * `file_path` - File path for the truncation marker
+/// * `include_summary` - Whether to include the summary marker
+///
+/// # Returns
+///
+/// * `(truncated_content, was_truncated)` - The truncated content and whether truncation occurred
+pub fn truncate_simple_with_options(
+    content: &str,
+    max_lines: usize,
+    file_path: &str,
+    include_summary: bool,
+) -> (String, bool) {
     let lines: Vec<&str> = content.lines().collect();
     let total_lines = lines.len();
 
@@ -527,20 +558,36 @@ pub fn truncate_simple(content: &str, max_lines: usize, file_path: &str) -> (Str
     let kept_lines: Vec<&str> = lines.into_iter().take(max_lines).collect();
     let mut truncated = kept_lines.join("\n");
 
-    // Add truncation marker (matching Python format)
-    let reduced_pct = (total_lines - max_lines) * 100 / total_lines;
-    let marker = format!(
-        "\n\n{}\nTRUNCATED at line {}/{} ({}% reduced)\nTo get full content: --include \"{}\" --truncate 0\n{}\n",
-        "=".repeat(70),
-        max_lines,
-        total_lines,
-        reduced_pct,
-        file_path,
-        "=".repeat(70)
-    );
-    truncated.push_str(&marker);
+    // Add truncation marker (matching Python format) only if include_summary is true
+    if include_summary {
+        let reduced_pct = (total_lines - max_lines) * 100 / total_lines;
+        let marker = format!(
+            "\n\n{}\nTRUNCATED at line {}/{} ({}% reduced)\nTo get full content: --include \"{}\" --truncate 0\n{}\n",
+            "=".repeat(70),
+            max_lines,
+            total_lines,
+            reduced_pct,
+            file_path,
+            "=".repeat(70)
+        );
+        truncated.push_str(&marker);
+    }
 
     (truncated, true)
+}
+
+/// Check if a file should skip truncation based on exclude patterns
+///
+/// # Arguments
+///
+/// * `path` - File path to check
+/// * `patterns` - Patterns to match against
+///
+/// # Returns
+///
+/// * `true` if the file should skip truncation
+pub fn should_skip_truncation(path: &str, patterns: &[String]) -> bool {
+    matches_patterns(path, patterns)
 }
 
 /// Serialize a file entry into Plus/Minus format
@@ -561,6 +608,27 @@ pub fn serialize_file(entry: &FileEntry) -> String {
 /// Smart mode uses language analyzers to identify important sections
 /// and keeps them while truncating less important parts.
 pub fn truncate_smart(content: &str, max_lines: usize, file_path: &str) -> (String, bool) {
+    truncate_smart_with_options(content, max_lines, file_path, true)
+}
+
+/// Truncate content using smart mode with options
+///
+/// # Arguments
+///
+/// * `content` - The content to truncate
+/// * `max_lines` - Maximum number of lines to keep
+/// * `file_path` - File path for the truncation marker
+/// * `include_summary` - Whether to include the summary marker
+///
+/// # Returns
+///
+/// * `(truncated_content, was_truncated)` - The truncated content and whether truncation occurred
+pub fn truncate_smart_with_options(
+    content: &str,
+    max_lines: usize,
+    file_path: &str,
+    include_summary: bool,
+) -> (String, bool) {
     let lines: Vec<&str> = content.lines().collect();
     let total_lines = lines.len();
 
@@ -614,7 +682,7 @@ pub fn truncate_smart(content: &str, max_lines: usize, file_path: &str) -> (Stri
 
         // If we have more important lines than max_lines, fall back to simple
         if important_lines.len() > max_lines {
-            return truncate_simple(content, max_lines, file_path);
+            return truncate_simple_with_options(content, max_lines, file_path, include_summary);
         }
 
         // Build output with kept lines and gap markers
@@ -635,33 +703,54 @@ pub fn truncate_smart(content: &str, max_lines: usize, file_path: &str) -> (Stri
             last_line = line_num;
         }
 
-        // Add final truncation marker
-        let kept_count = important_lines.len();
-        let omitted = total_lines - kept_count;
-        if omitted > 0 {
-            result.push_str(&format!(
-                "\n{}\nSMART TRUNCATED: kept {}/{} lines ({}% reduced)\nLanguage: {} | Category: {}\n{}\n",
-                "=".repeat(70),
-                kept_count,
-                total_lines,
-                omitted * 100 / total_lines,
-                analysis.language,
-                analysis.category,
-                "=".repeat(70)
-            ));
+        // Add final truncation marker only if include_summary is true
+        if include_summary {
+            let kept_count = important_lines.len();
+            let omitted = total_lines - kept_count;
+            if omitted > 0 {
+                result.push_str(&format!(
+                    "\n{}\nSMART TRUNCATED: kept {}/{} lines ({}% reduced)\nLanguage: {} | Category: {}\n{}\n",
+                    "=".repeat(70),
+                    kept_count,
+                    total_lines,
+                    omitted * 100 / total_lines,
+                    analysis.language,
+                    analysis.category,
+                    "=".repeat(70)
+                ));
+            }
         }
 
         return (result, true);
     }
 
     // Fall back to simple truncation if no analyzer available
-    truncate_simple(content, max_lines, file_path)
+    truncate_simple_with_options(content, max_lines, file_path, include_summary)
 }
 
 /// Truncate content using structure mode (signatures only)
 ///
 /// Structure mode extracts only class/function signatures, removing all bodies.
 pub fn truncate_structure(content: &str, file_path: &str) -> (String, bool) {
+    truncate_structure_with_options(content, file_path, true)
+}
+
+/// Truncate content using structure mode with options
+///
+/// # Arguments
+///
+/// * `content` - The content to truncate
+/// * `file_path` - File path for the truncation marker
+/// * `include_summary` - Whether to include the summary marker
+///
+/// # Returns
+///
+/// * `(truncated_content, was_truncated)` - The truncated content and whether truncation occurred
+pub fn truncate_structure_with_options(
+    content: &str,
+    file_path: &str,
+    include_summary: bool,
+) -> (String, bool) {
     let lines: Vec<&str> = content.lines().collect();
     let total_lines = lines.len();
 
@@ -732,7 +821,7 @@ pub fn truncate_structure(content: &str, file_path: &str) -> (String, bool) {
             // No structure found, return first 20 lines
             let kept: Vec<&str> = lines.iter().take(20).copied().collect();
             let mut result = kept.join("\n");
-            if total_lines > 20 {
+            if total_lines > 20 && include_summary {
                 result.push_str(&format!(
                     "\n\n{}\nSTRUCTURE MODE: No signatures found, showing first 20/{} lines\n{}\n",
                     "=".repeat(70),
@@ -752,18 +841,20 @@ pub fn truncate_structure(content: &str, file_path: &str) -> (String, bool) {
             }
         }
 
-        // Add structure marker
-        let kept_count = signature_lines.len();
-        result.push_str(&format!(
-            "\n{}\nSTRUCTURE MODE: {} signatures extracted from {} lines\nLanguage: {} | Classes: {} | Functions: {}\n{}\n",
-            "=".repeat(70),
-            kept_count,
-            total_lines,
-            analysis.language,
-            analysis.classes.len(),
-            analysis.functions.len(),
-            "=".repeat(70)
-        ));
+        // Add structure marker only if include_summary is true
+        if include_summary {
+            let kept_count = signature_lines.len();
+            result.push_str(&format!(
+                "\n{}\nSTRUCTURE MODE: {} signatures extracted from {} lines\nLanguage: {} | Classes: {} | Functions: {}\n{}\n",
+                "=".repeat(70),
+                kept_count,
+                total_lines,
+                analysis.language,
+                analysis.classes.len(),
+                analysis.functions.len(),
+                "=".repeat(70)
+            ));
+        }
 
         return (result, true);
     }
@@ -771,7 +862,7 @@ pub fn truncate_structure(content: &str, file_path: &str) -> (String, bool) {
     // Fall back to first 30 lines if no analyzer
     let kept: Vec<&str> = lines.iter().take(30).copied().collect();
     let mut result = kept.join("\n");
-    if total_lines > 30 {
+    if total_lines > 30 && include_summary {
         result.push_str(&format!(
             "\n\n{}\nSTRUCTURE MODE: Unknown language, showing first 30/{} lines\n{}\n",
             "=".repeat(70),
@@ -1305,6 +1396,9 @@ impl Config {
             sort_by: "mtime".to_string(),
             sort_order: "desc".to_string(),
             stream: true,
+            truncate_summary: true,
+            truncate_exclude: vec![],
+            truncate_stats: false,
         };
 
         assert_eq!(config.truncate_lines, 500);
@@ -1370,7 +1464,7 @@ impl Config {
     }
 
     #[test]
-    fn test_truncate_simple_with_summary() {
+    fn test_truncate_simple_includes_summary_by_default() {
         let content = (0..20).map(|i| format!("line{}", i)).collect::<Vec<_>>().join("\n");
         let (result, truncated) = truncate_simple(&content, 5, "test.txt");
 
@@ -2056,5 +2150,95 @@ fn main() {
         assert!(truncated);
         assert!(result.contains("use std::collections"));
         assert!(result.contains("pub struct Config"));
+    }
+
+    // ============================================================
+    // Phase 2: Truncation Control Tests (TDD)
+    // ============================================================
+
+    #[test]
+    fn test_truncate_simple_without_summary() {
+        // Test truncation with summary disabled
+        let content = (0..20).map(|i| format!("line {}", i)).collect::<Vec<_>>().join("\n");
+        let (result, truncated) = truncate_simple_with_options(&content, 5, "test.py", false);
+        assert!(truncated);
+        assert!(!result.contains("TRUNCATED"), "Should NOT include summary marker when disabled");
+        assert!(!result.contains("reduced"), "Should NOT include stats when disabled");
+    }
+
+    #[test]
+    fn test_truncate_simple_with_summary() {
+        // Test truncation with summary enabled (default behavior)
+        let content = (0..20).map(|i| format!("line {}", i)).collect::<Vec<_>>().join("\n");
+        let (result, truncated) = truncate_simple_with_options(&content, 5, "test.py", true);
+        assert!(truncated);
+        assert!(result.contains("TRUNCATED"), "Should include summary marker when enabled");
+        assert!(result.contains("reduced"), "Should include stats when enabled");
+    }
+
+    #[test]
+    fn test_truncate_smart_without_summary() {
+        // Test smart truncation with summary disabled
+        let python = r#"import os
+
+def foo():
+    x = 1
+    y = 2
+    z = 3
+    return x + y + z
+
+def bar():
+    return True
+"#;
+        let (result, truncated) = truncate_smart_with_options(python, 5, "test.py", false);
+        assert!(truncated);
+        assert!(!result.contains("SMART TRUNCATED"), "Should NOT include smart truncation marker");
+    }
+
+    #[test]
+    fn test_truncate_structure_without_summary() {
+        // Test structure truncation with summary disabled
+        let python = r#"class Foo:
+    def bar(self):
+        pass
+    def baz(self):
+        pass
+"#;
+        let (result, truncated) = truncate_structure_with_options(python, "test.py", false);
+        assert!(truncated);
+        assert!(!result.contains("STRUCTURE MODE"), "Should NOT include structure marker");
+    }
+
+    #[test]
+    fn test_encoder_config_truncate_fields() {
+        // Test new truncation control fields in EncoderConfig
+        let config = EncoderConfig {
+            truncate_summary: false,
+            truncate_exclude: vec!["*.md".to_string(), "*.txt".to_string()],
+            truncate_stats: true,
+            ..Default::default()
+        };
+        assert!(!config.truncate_summary);
+        assert_eq!(config.truncate_exclude.len(), 2);
+        assert!(config.truncate_stats);
+    }
+
+    #[test]
+    fn test_encoder_config_truncate_defaults() {
+        // Test default values for truncation control fields
+        let config = EncoderConfig::default();
+        assert!(config.truncate_summary, "truncate_summary should default to true");
+        assert!(config.truncate_exclude.is_empty(), "truncate_exclude should default to empty");
+        assert!(!config.truncate_stats, "truncate_stats should default to false");
+    }
+
+    #[test]
+    fn test_truncate_exclude_pattern_match() {
+        // Test that files matching truncate_exclude are not truncated
+        let patterns = vec!["*.md".to_string(), "docs/**".to_string()];
+
+        assert!(should_skip_truncation("README.md", &patterns), "*.md should match README.md");
+        assert!(should_skip_truncation("docs/guide.txt", &patterns), "docs/** should match docs/guide.txt");
+        assert!(!should_skip_truncation("src/main.py", &patterns), "src/main.py should not match");
     }
 }

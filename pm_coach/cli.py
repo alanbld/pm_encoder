@@ -24,7 +24,7 @@ import sys
 from pathlib import Path
 from typing import List, Optional
 
-from .runner import DifferentialRunner, RunResult
+from .runner import DifferentialRunner, RunResult, ArtifactRunner, ArtifactResult
 from .sources.cloned import ClonedRepoSource
 
 
@@ -77,6 +77,19 @@ def parse_args(args: Optional[List[str]] = None) -> argparse.Namespace:
     )
 
     parser.add_argument(
+        "--check-init",
+        action="store_true",
+        help="Test --init-prompt artifact generation (Split Brain mode)",
+    )
+
+    parser.add_argument(
+        "--ai-target",
+        choices=["claude", "gemini"],
+        default="claude",
+        help="Target AI for --check-init (default: claude)",
+    )
+
+    parser.add_argument(
         "--verbose", "-v",
         action="store_true",
         help="Verbose output",
@@ -114,26 +127,36 @@ def main(argv: Optional[List[str]] = None) -> int:
     args.output.mkdir(parents=True, exist_ok=True)
 
     try:
-        urls = load_repo_urls(args.target)
+        urls = load_repo_urls(args.target)  # args.target is the repo URL positional arg
     except ValueError as e:
         print(f"Error: {e}", file=sys.stderr)
         return 1
 
     print(f"pm_coach v{__version__}")
+    mode = "Artifact (--init-prompt)" if args.check_init else "Differential"
+    print(f"Mode: {mode}")
     print(f"Testing {len(urls)} repository(ies)")
     print(f"Output: {args.output}/")
     print("-" * 60)
 
-    # Initialize runner
-    runner = DifferentialRunner(
-        python_cmd=args.python_cmd,
-        rust_cmd=args.rust_cmd,
-        lens=args.lens,
-        verbose=args.verbose,
-    )
+    # Initialize appropriate runner
+    if args.check_init:
+        runner = ArtifactRunner(
+            python_cmd=args.python_cmd,
+            rust_cmd=args.rust_cmd,
+            target=args.ai_target,  # --ai-target flag
+            verbose=args.verbose,
+        )
+    else:
+        runner = DifferentialRunner(
+            python_cmd=args.python_cmd,
+            rust_cmd=args.rust_cmd,
+            lens=args.lens,
+            verbose=args.verbose,
+        )
 
     # Results
-    results: List[RunResult] = []
+    results = []
     passed = 0
     failed = 0
 
@@ -149,14 +172,17 @@ def main(argv: Optional[List[str]] = None) -> int:
                 results.append(result)
 
                 if result.match:
-                    print(f"  Result: PASS (identical output)")
+                    if args.check_init:
+                        print(f"  Result: PASS (0 bytes difference)")
+                    else:
+                        print(f"  Result: PASS (identical output)")
                     passed += 1
                 else:
-                    print(f"  Result: FAIL - {result.failure_type}")
+                    print(f"  Result: FAIL - {result.failure_type.value}")
                     print(f"  Details: {result.diff_summary}")
                     failed += 1
 
-                    if args.generate_vectors:
+                    if args.generate_vectors and hasattr(result, 'save_vector'):
                         vector_path = args.output / f"vector_{result.repo_name}.json"
                         result.save_vector(vector_path)
                         print(f"  Vector: {vector_path}")
