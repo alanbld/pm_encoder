@@ -1,0 +1,36 @@
+{
+  "name": "budget_02_hybrid",
+  "description": "Token budgeting with hybrid strategy - validates auto-truncation of large files",
+  "version": "1.7.0",
+  "category": "budgeting",
+  "input": {
+    "files": {
+      "large_module.py": "class LargeModule:\n    '''A large module that exceeds 10% of budget.'''\n\n    def __init__(self):\n        self.data = []\n        self.cache = {}\n        self.config = {}\n\n    def process(self, items):\n        '''Process items with complex logic.'''\n        result = []\n        for item in items:\n            processed = self._transform(item)\n            result.append(processed)\n        return result\n\n    def _transform(self, item):\n        '''Transform a single item.'''\n        return item * 2\n\n    def analyze(self, data):\n        '''Analyze data and return statistics.'''\n        total = sum(data)\n        average = total / len(data) if data else 0\n        return {'total': total, 'average': average}\nclass LargeModule:\n    '''A large module that exceeds 10% of budget.'''\n\n    def __init__(self):\n        self.data = []\n        self.cache = {}\n        self.config = {}\n\n    def process(self, items):\n        '''Process items with complex logic.'''\n        result = []\n        for item in items:\n            processed = self._transform(item)\n            result.append(processed)\n        return result\n\n    def _transform(self, item):\n        '''Transform a single item.'''\n        return item * 2\n\n    def analyze(self, data):\n        '''Analyze data and return statistics.'''\n        total = sum(data)\n        average = total / len(data) if data else 0\n        return {'total': total, 'average': average}\nclass LargeModule:\n    '''A large module that exceeds 10% of budget.'''\n\n    def __init__(self):\n        self.data = []\n        self.cache = {}\n        self.config = {}\n\n    def process(self, items):\n        '''Process items with complex logic.'''\n        result = []\n        for item in items:\n            processed = self._transform(item)\n            result.append(processed)\n        return result\n\n    def _transform(self, item):\n        '''Transform a single item.'''\n        return item * 2\n\n    def analyze(self, data):\n        '''Analyze data and return statistics.'''\n        total = sum(data)\n        average = total / len(data) if data else 0\n        return {'total': total, 'average': average}\nclass LargeModule:\n    '''A large module that exceeds 10% of budget.'''\n\n    def __init__(self):\n        self.data = []\n        self.cache = {}\n        self.config = {}\n\n    def process(self, items):\n        '''Process items with complex logic.'''\n        result = []\n        for item in items:\n            processed = self._transform(item)\n            result.append(processed)\n        return result\n\n    def _transform(self, item):\n        '''Transform a single item.'''\n        return item * 2\n\n    def analyze(self, data):\n        '''Analyze data and return statistics.'''\n        total = sum(data)\n        average = total / len(data) if data else 0\n        return {'total': total, 'average': average}\nclass LargeModule:\n    '''A large module that exceeds 10% of budget.'''\n\n    def __init__(self):\n        self.data = []\n        self.cache = {}\n        self.config = {}\n\n    def process(self, items):\n        '''Process items with complex logic.'''\n        result = []\n        for item in items:\n            processed = self._transform(item)\n            result.append(processed)\n        return result\n\n    def _transform(self, item):\n        '''Transform a single item.'''\n        return item * 2\n\n    def analyze(self, data):\n        '''Analyze data and return statistics.'''\n        total = sum(data)\n        average = total / len(data) if data else 0\n        return {'total': total, 'average': average}\n",
+      "small.py": "x = 1\n"
+    },
+    "budget": 500,
+    "strategy": "hybrid",
+    "hybrid_threshold": 0.1
+  },
+  "expected": {
+    "strategy": "hybrid",
+    "budget": 500,
+    "files_selected": [
+      "large_module.py",
+      "small.py"
+    ],
+    "truncated_count": 1,
+    "selected_count": 2,
+    "used_tokens": 232,
+    "behavior": [
+      "Files > 10% of budget are auto-truncated to structure mode",
+      "Truncated files preserve signatures, remove bodies",
+      "Small files included in full"
+    ]
+  },
+  "metadata": {
+    "created_by": "generate_budget_vectors.py",
+    "python_version": "1.7.0",
+    "purpose": "Rust v0.8.0 budget hybrid strategy validation"
+  }
+}

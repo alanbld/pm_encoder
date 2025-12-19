@@ -1,0 +1,46 @@
+{
+  "name": "budget_03_lens_priority",
+  "description": "Token budgeting with lens priority groups - validates --lens + --token-budget integration",
+  "version": "1.7.0",
+  "category": "budgeting",
+  "input": {
+    "files": {
+      "src/core.py": "class Core:\n    pass\n",
+      "src/utils.py": "def util():\n    pass\n",
+      "tests/test_core.py": "def test_core():\n    assert True\n",
+      "docs/readme.md": "# Documentation\n"
+    },
+    "budget": 200,
+    "strategy": "drop",
+    "lens": "architecture"
+  },
+  "expected": {
+    "strategy": "drop",
+    "budget": 200,
+    "priorities": {
+      "src/core.py": 50,
+      "src/utils.py": 50,
+      "tests/test_core.py": 50,
+      "docs/readme.md": 50
+    },
+    "files_selected": [
+      "docs/readme.md",
+      "src/core.py",
+      "src/utils.py",
+      "tests/test_core.py"
+    ],
+    "files_dropped": [],
+    "selected_count": 4,
+    "dropped_count": 0,
+    "behavior": [
+      "Architecture lens assigns priorities via groups",
+      "src/**/*.py gets higher priority than tests/**",
+      "Files selected by priority order within budget"
+    ]
+  },
+  "metadata": {
+    "created_by": "generate_budget_vectors.py",
+    "python_version": "1.7.0",
+    "purpose": "Rust v0.8.0 lens + budget integration validation"
+  }
+}

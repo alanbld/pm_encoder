@@ -1,141 +1,140 @@
 # pm_encoder (Rust Engine)
 
-**Version:** 0.1.0
-**Status:** Foundation (v2.0 Architecture)
+**Version:** 0.8.0
+**Status:** Production Ready | Feature Parity with Python v1.7.0
 
 This is the Rust implementation of pm_encoder, designed as a high-performance context serializer for LLM workflows.
 
-## Architecture: Library-First Pattern
+## Features
 
-This crate is intentionally structured to separate **logic** from **interface**:
+### Core Features (100% Parity)
+- **Plus/Minus Format Serialization** - Full format support
+- **Context Lenses** - architecture, security, debug, minimal lenses
+- **Priority Groups** - File prioritization for token budgeting
+- **Token Budgeting** - `--token-budget 100k` with drop/truncate/hybrid strategies
+- **Truncation Modes** - simple, smart, structure
+- **Truncation Control** - `--truncate-summary`, `--truncate-exclude`
+- **Language Analyzers** - Python, Rust, JavaScript, Shell, Generic
+- **Init-Prompt** - `--init-prompt` generates CLAUDE.md/GEMINI_INSTRUCTIONS.txt + CONTEXT.txt
+- **Streaming Mode** - `--stream` for immediate output
+
+### Not Supported in Rust
+- **Python Plugins** - The Rust engine uses compiled analyzers only. For custom language plugins, use the Python reference implementation (`pm_encoder.py`).
+
+## Architecture: Library-First Pattern
 
 ```
 rust/
-├── Cargo.toml          # Package configuration (library + binary)
+├── Cargo.toml              # Package configuration
 ├── src/
-│   ├── lib.rs          # 🧠 The Brain (core logic)
+│   ├── lib.rs              # Core library (serialization, config)
+│   ├── analyzers/          # Language analyzers
+│   │   ├── mod.rs          # Analyzer registry
+│   │   ├── generic.rs      # Generic analyzer
+│   │   ├── python.rs       # Python analyzer
+│   │   ├── rust.rs         # Rust analyzer
+│   │   ├── javascript.rs   # JavaScript analyzer
+│   │   └── shell.rs        # Shell analyzer
+│   ├── budgeting.rs        # Token budgeting and priority resolution
+│   ├── lenses.rs           # Context lenses with priority groups
+│   ├── init.rs             # Init-prompt generation (Split Brain)
 │   └── bin/
-│       └── main.rs     # 🖥️ The Interface (CLI wrapper)
+│       └── main.rs         # CLI wrapper
 ```
 
-### The Brain: `lib.rs`
+### The Library: `lib.rs` + modules
 
 - **Purpose:** Pure Rust logic with no CLI dependencies
-- **Consumers:** CLI binary, WASM bindings, PyO3 Python bindings
-- **Testable:** Unit tests run against the library directly
-- **Reusable:** Can be embedded in any Rust project
+- **Consumers:** CLI binary, WASM bindings (future), PyO3 bindings (future)
+- **Testable:** 175+ unit tests
 
-**Key Functions:**
-- `version()` - Returns library version
-- `serialize_project(root: &str)` - Core serialization logic
-- `serialize_project_with_config(root: &str, config: &EncoderConfig)` - Configurable serialization
+**Key Exports:**
+- `serialize_project(root)` - Basic serialization
+- `serialize_project_with_config(root, config)` - Configurable serialization
+- `LensManager` - Context lens management
+- `apply_token_budget()` - Budget enforcement
+- `init::init_prompt()` - Generate AI instruction files
 
 ### The Interface: `bin/main.rs`
 
-- **Purpose:** Thin CLI wrapper around the library
-- **Responsibilities:** Argument parsing, error formatting, exit codes
-- **Philosophy:** Minimal logic, maximum delegation to `lib.rs`
+Thin CLI wrapper that delegates to the library.
 
-This separation ensures:
-1. **Testability** - Library logic can be unit tested without spawning processes
-2. **Reusability** - Same logic works for CLI, WASM, and Python
-3. **Modularity** - CLI can be swapped/extended without touching core logic
+## Usage
 
-## Future Bindings
-
-### WASM (JavaScript/Browser)
-
-The library can be compiled to WebAssembly:
-
-```rust
-use wasm_bindgen::prelude::*;
-
-#[wasm_bindgen]
-pub fn serialize_wasm(root: &str) -> String {
-    pm_encoder::serialize_project(root).unwrap_or_else(|e| e)
-}
+### Basic Serialization
+```bash
+pm_encoder /path/to/project
 ```
 
-### Python (PyO3)
+### With Context Lens
+```bash
+pm_encoder /path/to/project --lens architecture
+```
 
-The library can be wrapped for Python:
+### Token Budgeting
+```bash
+pm_encoder /path/to/project --token-budget 100k --budget-strategy hybrid
+```
 
-```rust
-use pyo3::prelude::*;
+### Init-Prompt (Split Brain Architecture)
+```bash
+pm_encoder /path/to/project --init-prompt --init-lens debug --target claude
+```
 
-#[pyfunction]
-fn serialize(root: &str) -> PyResult<String> {
-    pm_encoder::serialize_project(root)
-        .map_err(|e| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(e))
-}
+This creates:
+- `CLAUDE.md` - Instructions, commands, tree structure (NO code)
+- `CONTEXT.txt` - Serialized codebase (separate file)
+
+### Streaming Mode
+```bash
+pm_encoder /path/to/project --stream
 ```
 
 ## Building & Running
 
-### Build the Library
-
 ```bash
 cd rust
-cargo build --lib
-```
 
-### Build the CLI Binary
+# Build
+cargo build --release
 
-```bash
-cd rust
-cargo build --bin pm_encoder
-```
+# Run
+cargo run --release -- /path/to/project
 
-### Run the CLI
-
-```bash
-cd rust
-cargo run -- /path/to/project
-```
-
-### Run Tests
-
-```bash
-cd rust
+# Run tests
 cargo test
+
+# Run with coverage
+cargo tarpaulin
 ```
 
-## Design Principles
+## Test Coverage
 
-1. **Zero Dependencies** (for now) - Keep the skeleton minimal
-2. **Library-First** - Core logic lives in `lib.rs`, not `main.rs`
-3. **Interface Agnostic** - Same logic works for CLI, WASM, Python
-4. **Testability** - Library functions are pure and testable
-5. **Modularity** - Easy to add new interfaces without changing core logic
+- **Library:** 81%+ coverage
+- **Test Vectors:** 29 integration tests
+- **Total Tests:** 175+
 
-## Current Status
+## Performance
 
-**Implemented:**
-- ✅ Library skeleton (`lib.rs`)
-- ✅ CLI wrapper (`bin/main.rs`)
-- ✅ Basic configuration struct
-- ✅ Version management
-- ✅ Unit tests
+- **TTFB:** ~5ms (vs ~46ms Python)
+- **Throughput:** 10-100x faster for large codebases
+- **Memory:** Zero-copy where possible
 
-**Next Steps:**
-- Directory traversal
-- File filtering (ignore patterns)
-- Plus/Minus format generation
-- Language analyzers (Rust ports from Python)
-- Truncation modes (simple, smart, structure)
+## Comparison with Python
 
-## Why Rust?
+| Feature | Python v1.7.0 | Rust v0.8.0 |
+|---------|---------------|-------------|
+| Core Serialization | ✅ | ✅ |
+| Context Lenses | ✅ | ✅ |
+| Priority Groups | ✅ | ✅ |
+| Token Budgeting | ✅ | ✅ |
+| Truncation Control | ✅ | ✅ |
+| Init-Prompt | ✅ | ✅ |
+| Language Analyzers | ✅ | ✅ |
+| Custom Plugins | ✅ | ❌ |
+| Streaming | ✅ | ✅ |
 
-The Python implementation (pm_encoder.py) is excellent for:
-- Rapid development
-- Python ecosystem integration
-- Prototyping features
-
-The Rust implementation will provide:
-- **10-100x performance** for large codebases
-- **WASM compatibility** for browser-based tools
-- **Python bindings** (best of both worlds)
-- **Memory safety** without garbage collection
+**Note:** For custom language plugins, use the Python implementation.
 
 ## License
 

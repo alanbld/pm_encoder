@@ -1,0 +1,43 @@
+{
+  "name": "budget_01_drop",
+  "description": "Token budgeting with drop strategy - validates priority-based file selection",
+  "version": "1.7.0",
+  "category": "budgeting",
+  "input": {
+    "files": {
+      "high_priority.py": "class Main:\n    pass\n",
+      "medium_priority.py": "def helper():\n    pass\n",
+      "low_priority_test.py": "def test_something():\n    assert True\n"
+    },
+    "budget": 100,
+    "strategy": "drop",
+    "priorities": {
+      "high_priority.py": 100,
+      "medium_priority.py": 50,
+      "low_priority_test.py": 10
+    }
+  },
+  "expected": {
+    "strategy": "drop",
+    "budget": 100,
+    "files_selected": [
+      "high_priority.py",
+      "medium_priority.py",
+      "low_priority_test.py"
+    ],
+    "files_dropped": [],
+    "used_tokens": 90,
+    "dropped_count": 0,
+    "selected_count": 3,
+    "behavior": [
+      "Files sorted by priority DESC, then path ASC",
+      "High priority files included first",
+      "Low priority files dropped when budget exceeded"
+    ]
+  },
+  "metadata": {
+    "created_by": "generate_budget_vectors.py",
+    "python_version": "1.7.0",
+    "purpose": "Rust v0.8.0 budget drop strategy validation"
+  }
+}
