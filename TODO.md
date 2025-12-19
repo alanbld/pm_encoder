@@ -1,16 +1,10 @@
-# pm_encoder - Pending Tasks
+# pm_encoder - Task Tracker
 
 ## Releases
 
-- [ ] **PENDING:** Push v1.7.0 tag and publish GitHub Release
-  - Tag `v1.7.0` is created locally
-  - Release notes ready at `docs/releases/v1.7.0_PENDING.md`
-  - Run when GitHub access restored:
-    ```bash
-    gh release create v1.7.0 \
-      --title "v1.7.0 - The Intelligence Update" \
-      --notes-file docs/releases/v1.7.0_PENDING.md
-    ```
+- [x] v1.6.0 - The Streaming Update ✅ (2025-12-19)
+- [x] v1.7.0 - The Intelligence Update ✅ (2025-12-19)
+- [x] rust-v0.9.1 - Byte-Level Parity ✅ (2025-12-19)
 
 ## Rust Parity
 
