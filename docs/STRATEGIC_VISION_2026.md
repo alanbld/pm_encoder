@@ -174,7 +174,9 @@ Reference      Production       Browser/IDE     Claude Desktop   Tree-sitter
 
 ### v2.1 (WASM) - The Universal Client
 
-**Role**: Browser, IDE, embedded contexts — the mass adoption driver
+**Role**: Local, deterministic context resolution at the point of authoring
+
+> Code never leaves the machine. No cloud. No latency. No trust issues.
 
 #### The Problem: Workflow Friction
 
@@ -390,8 +392,11 @@ pub fn semantic_chunk(content: &str, lang: Language) -> Vec<SemanticUnit> {
 ### v2.1 (WASM)
 - [ ] Byte-identical to CLI
 - [ ] <500KB WASM bundle size
+- [ ] <50ms context generation (1000 files)
 - [ ] VS Code extension published
-- [ ] 100 weekly active users
+- [ ] 1,000 installs in first month
+- [ ] 4.5+ star rating
+- [ ] At least one public workflow mention (blog/tweet/issue) describing daily use
 
 ### v2.2 (MCP Server)
 - [ ] Claude Desktop integration working
