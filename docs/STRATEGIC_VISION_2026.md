@@ -174,7 +174,50 @@ Reference      Production       Browser/IDE     Claude Desktop   Tree-sitter
 
 ### v2.1 (WASM) - The Universal Client
 
-**Role**: Browser, IDE, embedded contexts
+**Role**: Browser, IDE, embedded contexts — the mass adoption driver
+
+#### The Problem: Workflow Friction
+
+**Current (5-7 steps):**
+```
+Developer in VS Code → Open terminal → Run pm_encoder CLI → Wait → Copy output → Paste into AI chat
+```
+
+**With WASM Extension (1 step):**
+```
+Cmd+Shift+P → "pm_encoder: Copy Context" → Done (already in clipboard, budgeted)
+```
+
+#### Why WASM Over Alternatives
+
+| Approach | Startup | Install | Cross-Platform | Sandboxed |
+|----------|---------|---------|----------------|-----------|
+| Native binary | Fast | Required | No (per-OS) | No |
+| Python subprocess | ~46ms | Python required | Yes | No |
+| **WASM module** | **~5ms** | **None** | **Yes** | **Yes** |
+
+**WASM wins because:**
+- Zero install — extension includes the engine
+- Cross-platform — same binary for Windows/Mac/Linux
+- Sandboxed — VS Code security model friendly
+- Instant — no subprocess spawn overhead
+
+#### Target Users
+
+| Segment | Pain Point | Value Prop |
+|---------|------------|------------|
+| Claude Code users | Already use CLI | Native integration, no context switch |
+| Cursor users | Need context for Composer | One-click budgeted context |
+| Copilot Chat users | Paste whole files manually | Intelligent truncation built-in |
+| Enterprise devs | Can't install CLI tools | Extension-only, no admin rights |
+
+#### Competitive Position
+
+- repomix: Web UI + MCP (no VS Code extension)
+- files-to-prompt: CLI only
+- **pm_encoder: First with native VS Code WASM integration**
+
+#### Implementation
 
 | Feature | Target |
 |---------|--------|
@@ -184,13 +227,23 @@ Reference      Production       Browser/IDE     Claude Desktop   Tree-sitter
 | VS Code extension | Marketplace |
 | npm package | @pm-encoder/wasm |
 
-**Architecture Requirements**:
+**Architecture Requirements** (already satisfied by ContextEngine):
 ```rust
 // Pure functions only - no std::fs, no network
 pub fn process_content(
     files: &[(String, String)],  // (path, content) pairs
     config: &EngineConfig,
 ) -> Result<String, EngineError>
+```
+
+**Estimated Effort**: 2-3 weeks for MVP (ContextEngine already I/O-free)
+
+#### Strategic Value
+
+```
+CLI (v2.0)     → Power users, CI pipelines
+WASM (v2.1)    → Mass adoption, zero friction  ← Adoption driver
+MCP (v2.2)     → Agent integration, automation ← Integration driver
 ```
 
 ---
