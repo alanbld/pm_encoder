@@ -113,6 +113,7 @@ impl LensManager {
         let mut built_in = HashMap::new();
 
         // Architecture lens - high-level code structure
+        // v1.7.0: Priority groups for token budgeting (matches Python)
         built_in.insert("architecture".to_string(), LensConfig {
             description: "High-level code structure and configuration".to_string(),
             truncate_mode: Some("structure".to_string()),
@@ -137,8 +138,30 @@ impl LensManager {
             ],
             sort_by: Some("name".to_string()),
             sort_order: Some("asc".to_string()),
-            groups: Vec::new(),  // v1.7.0: no default groups for built-in lenses
-            fallback: None,
+            groups: vec![
+                // Core implementation files - highest priority (100)
+                PriorityGroup { pattern: "*.py".to_string(), priority: 100, truncate_mode: Some("structure".to_string()), truncate: None },
+                PriorityGroup { pattern: "rust/src/**/*.rs".to_string(), priority: 100, truncate_mode: Some("structure".to_string()), truncate: None },
+                PriorityGroup { pattern: "**/*.rs".to_string(), priority: 95, truncate_mode: Some("structure".to_string()), truncate: None },
+                // Configuration files - high priority (90-80)
+                PriorityGroup { pattern: "Cargo.toml".to_string(), priority: 90, truncate_mode: None, truncate: None },
+                PriorityGroup { pattern: "pyproject.toml".to_string(), priority: 90, truncate_mode: None, truncate: None },
+                PriorityGroup { pattern: "*.toml".to_string(), priority: 85, truncate_mode: None, truncate: None },
+                PriorityGroup { pattern: "*.json".to_string(), priority: 80, truncate_mode: None, truncate: None },
+                PriorityGroup { pattern: "*.yaml".to_string(), priority: 80, truncate_mode: None, truncate: None },
+                PriorityGroup { pattern: "*.yml".to_string(), priority: 80, truncate_mode: None, truncate: None },
+                // Build files - medium-high priority (75-70)
+                PriorityGroup { pattern: "Makefile".to_string(), priority: 75, truncate_mode: None, truncate: None },
+                PriorityGroup { pattern: "Dockerfile".to_string(), priority: 70, truncate_mode: None, truncate: None },
+                // Documentation - medium priority (65)
+                PriorityGroup { pattern: "README.md".to_string(), priority: 65, truncate_mode: None, truncate: None },
+                // JavaScript/TypeScript - medium priority (60-55)
+                PriorityGroup { pattern: "*.ts".to_string(), priority: 60, truncate_mode: None, truncate: None },
+                PriorityGroup { pattern: "*.tsx".to_string(), priority: 60, truncate_mode: None, truncate: None },
+                PriorityGroup { pattern: "*.js".to_string(), priority: 55, truncate_mode: None, truncate: None },
+                PriorityGroup { pattern: "*.jsx".to_string(), priority: 55, truncate_mode: None, truncate: None },
+            ],
+            fallback: Some(FallbackConfig { priority: 50 }),
         });
 
         // Debug lens - recent changes
@@ -981,5 +1004,67 @@ mod tests {
         assert_eq!(group.priority, 20);
         assert_eq!(group.truncate_mode, Some("structure".to_string()));
         assert_eq!(group.truncate, Some(50));
+    }
+
+    // ============================================================
+    // Phase 1 TDD: Priority Groups in Built-in Lenses
+    // ============================================================
+
+    #[test]
+    fn test_architecture_lens_has_priority_groups() {
+        let manager = LensManager::new();
+        let lens = manager.get_lens("architecture").unwrap();
+        assert!(!lens.groups.is_empty(), "Architecture lens should have priority groups");
+        assert!(lens.groups.len() >= 15, "Should have at least 15 group patterns");
+    }
+
+    #[test]
+    fn test_architecture_lens_python_priority() {
+        let mut manager = LensManager::new();
+        let _ = manager.apply_lens("architecture");
+        let priority = manager.get_file_priority(Path::new("main.py"));
+        assert_eq!(priority, 100, "Python files should have priority 100");
+    }
+
+    #[test]
+    fn test_architecture_lens_rust_priority() {
+        let mut manager = LensManager::new();
+        let _ = manager.apply_lens("architecture");
+        let priority = manager.get_file_priority(Path::new("src/lib.rs"));
+        assert!(priority >= 95, "Rust files should have priority >= 95");
+    }
+
+    #[test]
+    fn test_architecture_lens_config_priority() {
+        let mut manager = LensManager::new();
+        let _ = manager.apply_lens("architecture");
+
+        // Cargo.toml should have high priority
+        let cargo_priority = manager.get_file_priority(Path::new("Cargo.toml"));
+        assert_eq!(cargo_priority, 90, "Cargo.toml should have priority 90");
+
+        // Generic JSON should have priority 80
+        let json_priority = manager.get_file_priority(Path::new("config.json"));
+        assert_eq!(json_priority, 80, "JSON files should have priority 80");
+    }
+
+    #[test]
+    fn test_architecture_lens_fallback_priority() {
+        let mut manager = LensManager::new();
+        let _ = manager.apply_lens("architecture");
+        let priority = manager.get_file_priority(Path::new("random.xyz"));
+        assert_eq!(priority, 50, "Unknown files should have fallback priority 50");
+    }
+
+    #[test]
+    fn test_architecture_lens_javascript_priority() {
+        let mut manager = LensManager::new();
+        let _ = manager.apply_lens("architecture");
+
+        let ts_priority = manager.get_file_priority(Path::new("app.ts"));
+        assert_eq!(ts_priority, 60, "TypeScript files should have priority 60");
+
+        let js_priority = manager.get_file_priority(Path::new("app.js"));
+        assert_eq!(js_priority, 55, "JavaScript files should have priority 55");
     }
 }

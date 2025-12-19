@@ -8,6 +8,7 @@ use lazy_static::lazy_static;
 use regex::Regex;
 use super::{AnalysisResult, LanguageAnalyzer};
 use std::collections::HashMap;
+use crate::python_style_split;
 
 /// Configuration for a language analyzer (regex patterns)
 #[derive(Clone)]
@@ -188,7 +189,7 @@ impl GenericAnalyzer {
 
 impl LanguageAnalyzer for GenericAnalyzer {
     fn analyze(&self, content: &str, file_path: &str) -> AnalysisResult {
-        let lines: Vec<&str> = content.lines().collect();
+        let lines: Vec<&str> = python_style_split(content);
         self.analyze_lines(&lines, file_path)
     }
 

@@ -2,6 +2,7 @@
 use lazy_static::lazy_static;
 use regex::Regex;
 use super::{AnalysisResult, LanguageAnalyzer};
+use crate::python_style_split;
 
 lazy_static! {
     static ref STRUCT_PATTERN: Regex = Regex::new(r"^\s*(?:pub\s+)?struct\s+(\w+)").unwrap();
@@ -118,7 +119,7 @@ impl RustAnalyzer {
 
 impl LanguageAnalyzer for RustAnalyzer {
     fn analyze(&self, content: &str, file_path: &str) -> AnalysisResult {
-        let lines: Vec<&str> = content.lines().collect();
+        let lines: Vec<&str> = python_style_split(content);
         self.analyze_lines(&lines, file_path)
     }
 

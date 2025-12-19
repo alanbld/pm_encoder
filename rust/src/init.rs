@@ -8,11 +8,14 @@
 
 use std::fs;
 use std::path::Path;
+use crate::python_style_split;
 
 /// Detect common project commands based on project files
 ///
 /// Scans the project root for common build system files and returns
 /// appropriate commands for each detected system.
+///
+/// Note: Must match Python's detect_project_commands exactly for parity.
 pub fn detect_project_commands(root: &str) -> Vec<String> {
     let mut commands = Vec::new();
     let root_path = Path::new(root);
@@ -23,9 +26,8 @@ pub fn detect_project_commands(root: &str) -> Vec<String> {
         commands.push("cargo test".to_string());
     }
 
-    // Node.js: package.json
+    // Node.js: package.json (Python uses npm test, npm start - NOT npm install)
     if root_path.join("package.json").exists() {
-        commands.push("npm install".to_string());
         commands.push("npm test".to_string());
         commands.push("npm start".to_string());
     }
@@ -36,31 +38,9 @@ pub fn detect_project_commands(root: &str) -> Vec<String> {
         commands.push("make test".to_string());
     }
 
-    // Python: requirements.txt or pyproject.toml
+    // Python: requirements.txt only (Python doesn't check pyproject.toml)
     if root_path.join("requirements.txt").exists() {
         commands.push("pip install -r requirements.txt".to_string());
-    }
-    if root_path.join("pyproject.toml").exists() {
-        commands.push("pip install -e .".to_string());
-    }
-
-    // Python: pytest
-    if root_path.join("pytest.ini").exists() || root_path.join("tests").exists() {
-        commands.push("pytest".to_string());
-    }
-
-    // Docker
-    if root_path.join("Dockerfile").exists() {
-        commands.push("docker build .".to_string());
-    }
-    if root_path.join("docker-compose.yml").exists() || root_path.join("docker-compose.yaml").exists() {
-        commands.push("docker-compose up".to_string());
-    }
-
-    // Go
-    if root_path.join("go.mod").exists() {
-        commands.push("go build".to_string());
-        commands.push("go test ./...".to_string());
     }
 
     commands
@@ -70,6 +50,11 @@ pub fn detect_project_commands(root: &str) -> Vec<String> {
 ///
 /// Creates an ASCII tree structure showing the project layout.
 /// Respects ignore patterns and max depth.
+///
+/// Note: Must match Python's generate_directory_tree exactly for parity:
+/// - Skips hidden files (starting with '.')
+/// - Sorts: directories first, then alphabetically by lowercase name
+/// - No root directory line
 pub fn generate_directory_tree(
     root: &str,
     ignore_patterns: &[String],
@@ -78,30 +63,20 @@ pub fn generate_directory_tree(
     let mut lines = Vec::new();
     let root_path = Path::new(root);
 
-    // Get the directory name for the root
-    let root_name = root_path
-        .file_name()
-        .and_then(|n| n.to_str())
-        .unwrap_or(".");
-
-    lines.push(format!("{}/", root_name));
-
-    // Build tree recursively
-    build_tree_recursive(root_path, root_path, &mut lines, "", ignore_patterns, 0, max_depth);
+    // Build tree recursively (no root line - matches Python)
+    build_tree_recursive(root_path, &mut lines, "", ignore_patterns, max_depth);
 
     lines
 }
 
 fn build_tree_recursive(
-    root: &Path,
     current: &Path,
     lines: &mut Vec<String>,
     prefix: &str,
     ignore_patterns: &[String],
-    depth: usize,
     max_depth: usize,
 ) {
-    if depth >= max_depth {
+    if max_depth == 0 {
         return;
     }
 
@@ -111,31 +86,43 @@ fn build_tree_recursive(
         Err(_) => return,
     };
 
-    // Sort entries: directories first, then by name
+    // Sort entries: directories first, then by lowercase name (matches Python)
     entries.sort_by(|a, b| {
         let a_is_dir = a.file_type().map(|t| t.is_dir()).unwrap_or(false);
         let b_is_dir = b.file_type().map(|t| t.is_dir()).unwrap_or(false);
         match (a_is_dir, b_is_dir) {
             (true, false) => std::cmp::Ordering::Less,
             (false, true) => std::cmp::Ordering::Greater,
-            _ => a.file_name().cmp(&b.file_name()),
+            _ => {
+                let a_name = a.file_name().to_string_lossy().to_lowercase();
+                let b_name = b.file_name().to_string_lossy().to_lowercase();
+                a_name.cmp(&b_name)
+            }
         }
     });
 
-    // Filter out ignored entries
+    // Filter out hidden files and ignored entries (matches Python)
     let entries: Vec<_> = entries
         .into_iter()
         .filter(|entry| {
             let name = entry.file_name();
             let name_str = name.to_string_lossy();
 
+            // Skip hidden files (Python skips these)
+            if name_str.starts_with('.') {
+                return false;
+            }
+
             // Check against ignore patterns
             for pattern in ignore_patterns {
-                if pattern.starts_with("*.") {
-                    // Extension pattern
-                    let ext = &pattern[1..]; // Get ".ext"
-                    if name_str.ends_with(ext) {
-                        return false;
+                // Use fnmatch-style matching
+                if pattern.contains('*') {
+                    // Simple glob pattern
+                    if pattern.starts_with("*.") {
+                        let ext = &pattern[1..];
+                        if name_str.ends_with(ext) {
+                            return false;
+                        }
                     }
                 } else if name_str == pattern.as_str() {
                     return false;
@@ -159,18 +146,70 @@ fn build_tree_recursive(
         if is_dir {
             lines.push(format!("{}{}{}/", prefix, connector, name_str));
             build_tree_recursive(
-                root,
                 &entry.path(),
                 lines,
                 &format!("{}{}", prefix, child_prefix),
                 ignore_patterns,
-                depth + 1,
-                max_depth,
+                max_depth - 1,
             );
         } else {
             lines.push(format!("{}{}{}", prefix, connector, name_str));
         }
     }
+}
+
+/// Generate the .pm_encoder_meta header content
+///
+/// Matches Python's lens_manager.get_meta_content() output exactly.
+fn generate_meta_header(lens_name: &str, description: &str) -> String {
+    use chrono::Utc;
+
+    let timestamp = Utc::now().format("%Y-%m-%dT%H:%M:%S%.6f").to_string();
+
+    let mut content = String::new();
+    content.push_str(&format!("Context generated with lens: \"{}\"\n", lens_name));
+    content.push_str(&format!("Focus: {}\n", description));
+    content.push('\n');
+
+    // For architecture lens, add truncation info
+    if lens_name == "architecture" {
+        content.push_str("Implementation details truncated using structure mode\n");
+        content.push_str("Output shows only:\n");
+        content.push_str("  - Import/export statements\n");
+        content.push_str("  - Class and function signatures\n");
+        content.push_str("  - Type definitions and interfaces\n");
+        content.push_str("  - Module-level documentation\n");
+        content.push('\n');
+    }
+
+    content.push_str(&format!("Generated: {}\n", timestamp));
+    content.push_str(&format!("pm_encoder version: {}\n", crate::VERSION));
+
+    // Calculate MD5 of content
+    let checksum = crate::calculate_md5(&content);
+
+    // Format as Plus/Minus file entry
+    format!(
+        "++++++++++ .pm_encoder_meta ++++++++++\n{}\
+---------- .pm_encoder_meta {} .pm_encoder_meta ----------\n",
+        content, checksum
+    )
+}
+
+/// Format a number with thousand separators (commas)
+///
+/// Matches Python's {:,} format specifier for parity.
+fn format_with_commas(n: usize) -> String {
+    let s = n.to_string();
+    let mut result = String::new();
+    let chars: Vec<char> = s.chars().collect();
+    for (i, c) in chars.iter().enumerate() {
+        if i > 0 && (chars.len() - i) % 3 == 0 {
+            result.push(',');
+        }
+        result.push(*c);
+    }
+    result
 }
 
 /// Get the instruction file name for a target
@@ -203,29 +242,62 @@ pub fn init_prompt(
     // Step 1: Detect project commands
     let commands = detect_project_commands(root);
 
-    // Step 2: Generate directory tree
-    let ignore_patterns = vec![
+    // Step 2: Generate directory tree (max_depth=3 matches Python)
+    let tree_ignore = vec![
         ".git".to_string(),
         "target".to_string(),
         ".venv".to_string(),
         "__pycache__".to_string(),
         "node_modules".to_string(),
         "*.pyc".to_string(),
+        // Exclude generated files (prevent recursion, matches Python)
+        "CONTEXT.txt".to_string(),
+        "CLAUDE.md".to_string(),
+        "GEMINI_INSTRUCTIONS.txt".to_string(),
     ];
-    let tree = generate_directory_tree(root, &ignore_patterns, 4);
+    let tree = generate_directory_tree(root, &tree_ignore, 3);
 
     // Step 3: Apply lens and serialize context
     let mut lens_manager = LensManager::new();
     let applied_lens = lens_manager.apply_lens(lens_name)?;
 
+    // Start with default ignore patterns (matches Python's load_config behavior)
+    let default_ignores = vec![
+        ".git".to_string(),
+        "target".to_string(),
+        ".venv".to_string(),
+        "__pycache__".to_string(),
+        "*.pyc".to_string(),
+        "*.swp".to_string(),
+    ];
+
+    // Merge default ignores with lens exclude patterns (matches Python)
+    let mut merged_ignores = default_ignores;
+    for pattern in &applied_lens.ignore_patterns {
+        if !merged_ignores.contains(pattern) {
+            merged_ignores.push(pattern.clone());
+        }
+    }
+
+    // Apply all lens settings including truncation (matches Python)
     let config = EncoderConfig {
-        ignore_patterns: applied_lens.ignore_patterns.clone(),
+        ignore_patterns: merged_ignores,
         include_patterns: applied_lens.include_patterns.clone(),
+        sort_by: applied_lens.sort_by.clone(),
+        sort_order: applied_lens.sort_order.clone(),
+        truncate_lines: applied_lens.truncate_lines,
+        truncate_mode: applied_lens.truncate_mode.clone(),
         ..Default::default()
     };
 
-    let context = serialize_project_with_config(root, &config)?;
-    let context_lines = context.lines().count();
+    // Generate meta header (matches Python's lens_manager.get_meta_content())
+    let meta_header = generate_meta_header(lens_name, &applied_lens.description);
+
+    let serialized_content = serialize_project_with_config(root, &config)?;
+
+    // Prepend meta header to context (matches Python behavior)
+    let context = format!("{}{}", meta_header, serialized_content);
+    let context_lines = python_style_split(&context).len();
     let context_bytes = context.len();
 
     // Step 4: Write CONTEXT.txt
@@ -300,19 +372,25 @@ fn generate_instruction_content(
         content.push_str("\n");
     }
 
-    // Project Structure
+    // Project Structure (matches Python format: project_name/ followed by tree)
     content.push_str("## Project Structure\n\n");
     content.push_str("```\n");
+    content.push_str(&format!("{}/\n", project_name));
     for line in tree {
         content.push_str(line);
         content.push('\n');
     }
     content.push_str("```\n\n");
 
-    // Statistics
+    // Statistics (matches Python format)
+    // Note: Python uses file_count from tree, we use context_lines as approximation
+    let file_count = tree.iter().filter(|line| !line.ends_with('/')).count();
     content.push_str("**Statistics:**\n");
-    content.push_str(&format!("- Context lines: {}\n", context_lines));
-    content.push_str(&format!("- Context size: {} bytes ({:.1} KB)\n\n", context_bytes, context_bytes as f64 / 1024.0));
+    content.push_str(&format!("- Files: {}\n", file_count));
+    // Format bytes with thousand separators (matches Python's {:,})
+    let bytes_str = format_with_commas(context_bytes);
+    content.push_str(&format!("- Context size: {} bytes ({:.1} KB)\n\n",
+        bytes_str, context_bytes as f64 / 1024.0));
 
     // Pointer to CONTEXT.txt
     content.push_str("For the complete codebase context, see `CONTEXT.txt` in this directory.\n\n");
@@ -369,8 +447,8 @@ mod tests {
         fs::write(temp.join("package.json"), "{}").unwrap();
 
         let commands = detect_project_commands(temp.to_str().unwrap());
-        assert!(commands.contains(&"npm install".to_string()));
         assert!(commands.contains(&"npm test".to_string()));
+        assert!(commands.contains(&"npm start".to_string()));
 
         let _ = fs::remove_dir_all(&temp);
     }
@@ -486,5 +564,37 @@ mod tests {
         let result = init_prompt("/nonexistent/path/xyz", "architecture", "claude");
         assert!(result.is_err());
         assert!(result.unwrap_err().contains("not found"));
+    }
+
+    // ═══════════════════════════════════════════════════════════════════════════
+    // TDD TEST FOR PYTHON PARITY (Gap #3: Tree includes CONTEXT.txt)
+    // ═══════════════════════════════════════════════════════════════════════════
+
+    #[test]
+    fn test_claude_md_tree_includes_context_txt() {
+        // Python behavior: CLAUDE.md tree shows CONTEXT.txt in the project structure
+        // because CONTEXT.txt is generated BEFORE the tree, so it appears in the listing
+
+        let temp = std::env::temp_dir().join("pm_test_tree_context");
+        let _ = fs::remove_dir_all(&temp);
+        fs::create_dir_all(&temp).unwrap();
+        fs::write(temp.join("main.py"), "x = 1").unwrap();
+
+        let result = init_prompt(temp.to_str().unwrap(), "architecture", "claude");
+
+        if let Ok((instruction_path, _)) = result {
+            let claude_md = fs::read_to_string(&instruction_path).unwrap();
+
+            // The tree in CLAUDE.md should show CONTEXT.txt (Python parity)
+            assert!(
+                claude_md.contains("CONTEXT.txt"),
+                "CLAUDE.md tree should include CONTEXT.txt. Got:\n{}",
+                &claude_md
+            );
+        } else {
+            panic!("init_prompt should succeed");
+        }
+
+        let _ = fs::remove_dir_all(&temp);
     }
 }

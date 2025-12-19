@@ -547,7 +547,7 @@ pub fn truncate_simple_with_options(
     file_path: &str,
     include_summary: bool,
 ) -> (String, bool) {
-    let lines: Vec<&str> = content.lines().collect();
+    let lines: Vec<&str> = python_style_split(content);
     let total_lines = lines.len();
 
     if max_lines == 0 || total_lines <= max_lines {
@@ -562,7 +562,7 @@ pub fn truncate_simple_with_options(
     if include_summary {
         let reduced_pct = (total_lines - max_lines) * 100 / total_lines;
         let marker = format!(
-            "\n\n{}\nTRUNCATED at line {}/{} ({}% reduced)\nTo get full content: --include \"{}\" --truncate 0\n{}\n",
+            "\n\n{}\nTRUNCATED at line {}/{} ({}% reduction)\nTo get full content: --include \"{}\" --truncate 0\n{}\n",
             "=".repeat(70),
             max_lines,
             total_lines,
@@ -603,6 +603,160 @@ pub fn serialize_file(entry: &FileEntry) -> String {
     serialize_file_with_truncation(entry, 0, "simple")
 }
 
+/// Truncate content using Python's default strategy: keep first 40%, gap, keep last 10%
+///
+/// This matches Python's LanguageAnalyzer.get_truncate_ranges() default behavior
+/// for files without specialized analyzers. The output includes gap markers
+/// to show where content was omitted.
+fn truncate_with_gap_markers(
+    content: &str,
+    max_lines: usize,
+    file_path: &str,
+    include_summary: bool,
+    language: Option<&str>,
+) -> (String, bool) {
+    let lines: Vec<&str> = python_style_split(content);
+    let total_lines = lines.len();
+
+    if max_lines == 0 || total_lines <= max_lines {
+        return (content.to_string(), false);
+    }
+
+    // Python's default strategy: keep first 40% and last 10% of max_lines
+    let keep_first = (max_lines as f64 * 0.4) as usize;
+    let keep_last = (max_lines as f64 * 0.1) as usize;
+
+    // Calculate range boundaries (1-indexed like Python)
+    let first_end = keep_first.min(total_lines);
+    // Use saturating subtraction to avoid overflow
+    let last_start = total_lines.saturating_sub(keep_last).saturating_add(1).max(first_end + 1);
+
+    let mut result = String::new();
+
+    // Keep first section
+    for i in 0..first_end {
+        result.push_str(lines[i]);
+        result.push('\n');
+    }
+
+    // Add gap marker if there's a gap
+    if last_start > first_end + 1 {
+        let gap_size = last_start - first_end - 1;
+        result.push_str(&format!("\n... [{} lines omitted] ...\n\n", gap_size));
+    }
+
+    // Keep last section
+    for i in (last_start - 1)..total_lines {
+        result.push_str(lines[i]);
+        result.push('\n');
+    }
+
+    // Calculate kept lines (excluding the gap marker line itself)
+    let kept_count = first_end + total_lines.saturating_sub(last_start).saturating_add(1);
+
+    // Add truncation marker
+    if include_summary {
+        let omitted = total_lines.saturating_sub(kept_count);
+        let mut marker = format!(
+            "\n{}\nTRUNCATED at line {}/{} ({}% reduction)",
+            "=".repeat(70),
+            max_lines,
+            total_lines,
+            omitted * 100 / total_lines,
+        );
+
+        // Add Language line if provided (matches Python's smart mode marker)
+        if let Some(lang) = language {
+            marker.push_str(&format!("\nLanguage: {}", lang));
+        }
+
+        marker.push_str(&format!(
+            "\nTo get full content: --include \"{}\" --truncate 0\n{}\n",
+            file_path,
+            "=".repeat(70)
+        ));
+        result.push_str(&marker);
+    }
+
+    (result, true)
+}
+
+/// Truncate markdown content matching Python's MarkdownAnalyzer.get_truncate_ranges()
+///
+/// Python's markdown truncation keeps most of the file:
+/// - Allocates budget for H1/H2 header sections (10 lines each, up to 10% of max per section)
+/// - Fills remaining budget with beginning of file
+/// This effectively keeps first ~max_lines with header supplements
+fn truncate_markdown(
+    content: &str,
+    max_lines: usize,
+    file_path: &str,
+    include_summary: bool,
+) -> (String, bool) {
+    let lines: Vec<&str> = python_style_split(content);
+    let total_lines = lines.len();
+
+    if max_lines == 0 || total_lines <= max_lines {
+        return (content.to_string(), false);
+    }
+
+    // Python behavior: keep first max_lines (budget filled with beginning)
+    // This matches Python's MarkdownAnalyzer.get_truncate_ranges() which adds (1, budget)
+    let kept_lines: Vec<&str> = lines.iter().take(max_lines).copied().collect();
+    let mut truncated = kept_lines.join("\n");
+
+    // Add smart mode marker with Language: Markdown (matches Python's smart mode output)
+    if include_summary {
+        let reduced_pct = (total_lines - max_lines) * 100 / total_lines;
+
+        // Extract links from markdown (Python's "imports" field for markdown)
+        // Python iterates LINE BY LINE, so multi-line links are not found
+        let link_pattern = regex::Regex::new(r"\[([^\]]+)\]\(([^\)]+)\)").unwrap();
+        let mut links: Vec<&str> = Vec::new();
+        for line in content.lines() {
+            for cap in link_pattern.captures_iter(line) {
+                if let Some(url) = cap.get(2) {
+                    links.push(url.as_str());
+                    if links.len() >= 10 {
+                        break;
+                    }
+                }
+            }
+            if links.len() >= 10 {
+                break;
+            }
+        }
+
+        let mut marker = format!(
+            "\n\n{}\nTRUNCATED at line {}/{} ({}% reduction)\nLanguage: Markdown\nCategory: documentation",
+            "=".repeat(70),
+            max_lines,
+            total_lines,
+            reduced_pct,
+        );
+
+        // Add Key imports if links found (Python shows first 8 + "...")
+        if !links.is_empty() {
+            let imports_str = if links.len() > 8 {
+                format!("{}, ...", links[..8].join(", "))
+            } else {
+                links.join(", ")
+            };
+            marker.push_str(&format!("\nKey imports: {}", imports_str));
+        }
+
+        // Empty line before "To get full content" (matches Python's marker format)
+        marker.push_str(&format!(
+            "\n\nTo get full content: --include \"{}\" --truncate 0\n{}\n",
+            file_path,
+            "=".repeat(70)
+        ));
+        truncated.push_str(&marker);
+    }
+
+    (truncated, true)
+}
+
 /// Truncate content using smart mode (language-aware)
 ///
 /// Smart mode uses language analyzers to identify important sections
@@ -629,7 +783,7 @@ pub fn truncate_smart_with_options(
     file_path: &str,
     include_summary: bool,
 ) -> (String, bool) {
-    let lines: Vec<&str> = content.lines().collect();
+    let lines: Vec<&str> = python_style_split(content);
     let total_lines = lines.len();
 
     if max_lines == 0 || total_lines <= max_lines {
@@ -680,9 +834,16 @@ pub fn truncate_smart_with_options(
         important_lines.sort();
         important_lines.dedup();
 
-        // If we have more important lines than max_lines, fall back to simple
-        if important_lines.len() > max_lines {
-            return truncate_simple_with_options(content, max_lines, file_path, include_summary);
+        // If we have more important lines than max_lines, or found very few important lines
+        // (non-code file), use Python's default truncation strategy: keep first 40%, gap, keep last 10%
+        if important_lines.len() > max_lines || (important_lines.len() < 50 && total_lines > max_lines) {
+            return truncate_with_gap_markers(content, max_lines, file_path, include_summary, Some(&analysis.language));
+        }
+
+        // If file is smaller than max_lines after finding important sections,
+        // just return the original content
+        if total_lines <= max_lines {
+            return (content.to_string(), false);
         }
 
         // Build output with kept lines and gap markers
@@ -709,7 +870,7 @@ pub fn truncate_smart_with_options(
             let omitted = total_lines - kept_count;
             if omitted > 0 {
                 result.push_str(&format!(
-                    "\n{}\nSMART TRUNCATED: kept {}/{} lines ({}% reduced)\nLanguage: {} | Category: {}\n{}\n",
+                    "\n{}\nSMART TRUNCATED: kept {}/{} lines ({}% reduction)\nLanguage: {} | Category: {}\n{}\n",
                     "=".repeat(70),
                     kept_count,
                     total_lines,
@@ -724,8 +885,8 @@ pub fn truncate_smart_with_options(
         return (result, true);
     }
 
-    // Fall back to simple truncation if no analyzer available
-    truncate_simple_with_options(content, max_lines, file_path, include_summary)
+    // Fall back to gap-based truncation if no analyzer available (Python behavior)
+    truncate_with_gap_markers(content, max_lines, file_path, include_summary, None)
 }
 
 /// Truncate content using structure mode (signatures only)
@@ -751,7 +912,29 @@ pub fn truncate_structure_with_options(
     file_path: &str,
     include_summary: bool,
 ) -> (String, bool) {
-    let lines: Vec<&str> = content.lines().collect();
+    // Use 0 for max_lines to disable smart fallback (backward compatible)
+    truncate_structure_with_fallback(content, file_path, include_summary, 0)
+}
+
+/// Truncate content using structure mode with smart fallback (matches Python behavior)
+///
+/// # Arguments
+///
+/// * `content` - The content to truncate
+/// * `file_path` - File path for the truncation marker
+/// * `include_summary` - Whether to include the summary marker
+/// * `max_lines` - Maximum lines for smart fallback when no signatures found (0 = no fallback)
+///
+/// # Returns
+///
+/// * `(truncated_content, was_truncated)` - The truncated content and whether truncation occurred
+pub fn truncate_structure_with_fallback(
+    content: &str,
+    file_path: &str,
+    include_summary: bool,
+    max_lines: usize,
+) -> (String, bool) {
+    let lines: Vec<&str> = python_style_split(content);
     let total_lines = lines.len();
 
     if total_lines == 0 {
@@ -762,54 +945,112 @@ pub fn truncate_structure_with_options(
     if let Some(analyzer) = analyzers::get_analyzer_for_file(file_path) {
         let analysis = analyzer.analyze(content, file_path);
 
-        // Collect signature lines (class/function definitions)
-        let mut signature_lines: Vec<usize> = Vec::new();
-
-        // Always keep imports/headers (first few lines)
-        for i in 1..=5.min(total_lines) {
-            if lines[i-1].trim().starts_with("import ")
-                || lines[i-1].trim().starts_with("from ")
-                || lines[i-1].trim().starts_with("use ")
-                || lines[i-1].trim().starts_with("#!")
-                || lines[i-1].trim().starts_with("//!")
-            {
-                signature_lines.push(i);
+        // Python behavior: Markdown files use specialized get_truncate_ranges()
+        // that keeps most of the file (beginning + header sections)
+        // This prevents false positives from code examples in markdown
+        let path_lower = file_path.to_lowercase();
+        if path_lower.ends_with(".md") || path_lower.ends_with(".markdown") {
+            if max_lines > 0 {
+                return truncate_markdown(content, max_lines, file_path, include_summary);
             }
+            return truncate_markdown(content, 2000, file_path, include_summary);
         }
 
-        // Find all class/function definition lines
+        // Collect signature lines matching Python's get_structure_ranges behavior
+        let mut signature_lines: Vec<usize> = Vec::new();
+
+        // Iterate through ALL lines (matching Python behavior)
         for (i, line) in lines.iter().enumerate() {
             let line_num = i + 1;
             let trimmed = line.trim_start();
 
+            // Skip empty lines and pure comments (but keep docstrings)
+            if trimmed.is_empty() {
+                continue;
+            }
+
+            // IMPORT STATEMENTS (Python: import, from; Rust: use; JS: import, export)
+            if trimmed.starts_with("import ")
+                || trimmed.starts_with("from ")
+                || trimmed.starts_with("use ")
+                || trimmed.starts_with("export ")
+            {
+                signature_lines.push(line_num);
+                continue;
+            }
+
+            // SHEBANG / MODULE DOCS (first few lines)
+            if line_num <= 5 && (trimmed.starts_with("#!") || trimmed.starts_with("//!")) {
+                signature_lines.push(line_num);
+                continue;
+            }
+
+            // MODULE-LEVEL DOCSTRINGS (first 10 lines)
+            if line_num <= 10 && (trimmed.starts_with("\"\"\"") || trimmed.starts_with("'''")) {
+                signature_lines.push(line_num);
+                continue;
+            }
+
+            // DECORATORS (Python @decorator)
+            if trimmed.starts_with("@") {
+                signature_lines.push(line_num);
+                continue;
+            }
+
+            // CLASS DEFINITIONS
             if trimmed.starts_with("class ")
-                || trimmed.starts_with("def ")
+                || trimmed.starts_with("pub struct ")
+                || trimmed.starts_with("struct ")
+            {
+                signature_lines.push(line_num);
+                continue;
+            }
+
+            // FUNCTION DEFINITIONS
+            if trimmed.starts_with("def ")
+                || trimmed.starts_with("async def ")
                 || trimmed.starts_with("fn ")
                 || trimmed.starts_with("pub fn ")
                 || trimmed.starts_with("async fn ")
+                || trimmed.starts_with("pub async fn ")
                 || trimmed.starts_with("function ")
-                || trimmed.starts_with("struct ")
-                || trimmed.starts_with("pub struct ")
-                || trimmed.starts_with("enum ")
-                || trimmed.starts_with("pub enum ")
-                || trimmed.starts_with("impl ")
-                || trimmed.starts_with("trait ")
-                || trimmed.starts_with("pub trait ")
-                || trimmed.starts_with("const ")
-                || trimmed.starts_with("pub const ")
+                || trimmed.starts_with("export function ")
+                || trimmed.starts_with("async function ")
             {
                 signature_lines.push(line_num);
-                // Also grab docstring/decorators above
-                if line_num > 1 {
-                    let prev = lines[line_num - 2].trim();
-                    if prev.starts_with("@")
-                        || prev.starts_with("///")
-                        || prev.starts_with("#[")
-                        || prev.starts_with("\"\"\"")
-                    {
-                        signature_lines.push(line_num - 1);
-                    }
-                }
+                continue;
+            }
+
+            // OTHER STRUCTURAL ELEMENTS (Rust: impl, trait, enum, const)
+            if trimmed.starts_with("impl ")
+                || trimmed.starts_with("trait ")
+                || trimmed.starts_with("pub trait ")
+                || trimmed.starts_with("enum ")
+                || trimmed.starts_with("pub enum ")
+                || trimmed.starts_with("const ")
+                || trimmed.starts_with("pub const ")
+                || trimmed.starts_with("pub mod ")
+                || trimmed.starts_with("mod ")
+            {
+                signature_lines.push(line_num);
+                continue;
+            }
+
+            // JS/TS: interface, type definitions, arrow functions
+            if trimmed.starts_with("interface ")
+                || trimmed.starts_with("export interface ")
+                || trimmed.starts_with("type ")
+                || trimmed.starts_with("export type ")
+                || (trimmed.starts_with("const ") && trimmed.contains("=>"))
+            {
+                signature_lines.push(line_num);
+                continue;
+            }
+
+            // Rust attributes (#[...])
+            if trimmed.starts_with("#[") {
+                signature_lines.push(line_num);
+                continue;
             }
         }
 
@@ -818,7 +1059,11 @@ pub fn truncate_structure_with_options(
         signature_lines.dedup();
 
         if signature_lines.is_empty() {
-            // No structure found, return first 20 lines
+            // No structure found - fall back to smart mode if max_lines > 0 (Python behavior)
+            if max_lines > 0 {
+                return truncate_smart_with_options(content, max_lines, file_path, include_summary);
+            }
+            // Otherwise return first 20 lines (backward compatible)
             let kept: Vec<&str> = lines.iter().take(20).copied().collect();
             let mut result = kept.join("\n");
             if total_lines > 20 && include_summary {
@@ -842,16 +1087,16 @@ pub fn truncate_structure_with_options(
         }
 
         // Add structure marker only if include_summary is true
+        // Format matches Python's structure mode output exactly
         if include_summary {
             let kept_count = signature_lines.len();
             result.push_str(&format!(
-                "\n{}\nSTRUCTURE MODE: {} signatures extracted from {} lines\nLanguage: {} | Classes: {} | Functions: {}\n{}\n",
+                "\n{}\nSTRUCTURE MODE: Showing only signatures ({}/{} lines)\nLanguage: {}\n\nIncluded: imports, class/function signatures, type definitions\nExcluded: function bodies, implementation details\n\nTo get full content: --include \"{}\" --truncate 0\n{}\n",
                 "=".repeat(70),
                 kept_count,
                 total_lines,
                 analysis.language,
-                analysis.classes.len(),
-                analysis.functions.len(),
+                file_path,
                 "=".repeat(70)
             ));
         }
@@ -859,7 +1104,12 @@ pub fn truncate_structure_with_options(
         return (result, true);
     }
 
-    // Fall back to first 30 lines if no analyzer
+    // No analyzer - fall back to smart mode if max_lines > 0 (Python behavior)
+    if max_lines > 0 {
+        return truncate_smart_with_options(content, max_lines, file_path, include_summary);
+    }
+
+    // Otherwise fall back to first 30 lines (backward compatible)
     let kept: Vec<&str> = lines.iter().take(30).copied().collect();
     let mut result = kept.join("\n");
     if total_lines > 30 && include_summary {
@@ -884,36 +1134,53 @@ pub fn truncate_structure_with_options(
 /// # Returns
 ///
 /// * Serialized string in Plus/Minus format
+/// Count lines matching Python's split('\n') behavior
+/// Python's split('\n') includes empty string for trailing newline
+fn count_lines_python_style(content: &str) -> usize {
+    content.split('\n').count()
+}
+
+/// Split string into lines matching Python's split('\n') behavior
+/// Unlike Rust's .lines(), this includes an empty string after trailing newline
+/// Example: "a\nb\n" → ["a", "b", ""] (3 items, not 2)
+pub fn python_style_split(content: &str) -> Vec<&str> {
+    content.split('\n').collect()
+}
+
 pub fn serialize_file_with_truncation(
     entry: &FileEntry,
     truncate_lines: usize,
     truncate_mode: &str,
 ) -> String {
     let mut output = String::new();
+    let original_lines = count_lines_python_style(&entry.content);
 
-    // Header: ++++++++++ filename ++++++++++
-    output.push_str(&format!("++++++++++ {} ++++++++++\n", entry.path));
-
-    // Apply truncation if needed
-    let content = if truncate_lines > 0 {
+    // Apply truncation and track if file was truncated
+    let (content, was_truncated) = if truncate_lines > 0 || truncate_mode == "structure" {
         match truncate_mode {
             "simple" => {
-                let (truncated, _) = truncate_simple(&entry.content, truncate_lines, &entry.path);
-                truncated
+                truncate_simple(&entry.content, truncate_lines, &entry.path)
             }
             "smart" => {
-                let (truncated, _) = truncate_smart(&entry.content, truncate_lines, &entry.path);
-                truncated
+                truncate_smart(&entry.content, truncate_lines, &entry.path)
             }
             "structure" => {
-                let (truncated, _) = truncate_structure(&entry.content, &entry.path);
-                truncated
+                // Use fallback version that falls back to smart mode when no signatures (Python behavior)
+                truncate_structure_with_fallback(&entry.content, &entry.path, true, truncate_lines)
             }
-            _ => entry.content.clone(),
+            _ => (entry.content.clone(), false),
         }
     } else {
-        entry.content.clone()
+        (entry.content.clone(), false)
     };
+
+    // Header: ++++++++++ filename [TRUNCATED: N lines] ++++++++++
+    // Match Python's format when truncation was applied
+    if was_truncated {
+        output.push_str(&format!("++++++++++ {} [TRUNCATED: {} lines] ++++++++++\n", entry.path, original_lines));
+    } else {
+        output.push_str(&format!("++++++++++ {} ++++++++++\n", entry.path));
+    }
 
     // Content
     output.push_str(&content);
@@ -924,11 +1191,20 @@ pub fn serialize_file_with_truncation(
         output.push('\n');
     }
 
-    // Footer: ---------- filename checksum filename ----------
-    output.push_str(&format!(
-        "---------- {} {} {} ----------\n",
-        entry.path, entry.md5, entry.path
-    ));
+    // Footer format: ---------- filename [TRUNCATED:original→final] checksum filename ----------
+    // Match Python's format with truncation info in footer
+    let final_lines = count_lines_python_style(&content);
+    if was_truncated {
+        output.push_str(&format!(
+            "---------- {} [TRUNCATED:{}→{}] {} {} ----------\n",
+            entry.path, original_lines, final_lines, entry.md5, entry.path
+        ));
+    } else {
+        output.push_str(&format!(
+            "---------- {} {} {} ----------\n",
+            entry.path, entry.md5, entry.path
+        ));
+    }
 
     output
 }
@@ -1228,7 +1504,7 @@ mod tests {
         assert!(result.contains("line3"));
         assert!(!result.contains("line4"));
         assert!(result.contains("TRUNCATED at line 3/10"));
-        assert!(result.contains("70% reduced"));
+        assert!(result.contains("70% reduction"));
     }
 
     #[test]
@@ -1470,7 +1746,7 @@ impl Config {
 
         assert!(truncated);
         assert!(result.contains("TRUNCATED"));
-        assert!(result.contains("reduced"));
+        assert!(result.contains("reduction"));
     }
 
     #[test]
@@ -2173,7 +2449,7 @@ fn main() {
         let (result, truncated) = truncate_simple_with_options(&content, 5, "test.py", true);
         assert!(truncated);
         assert!(result.contains("TRUNCATED"), "Should include summary marker when enabled");
-        assert!(result.contains("reduced"), "Should include stats when enabled");
+        assert!(result.contains("reduction"), "Should include stats when enabled");
     }
 
     #[test]
@@ -2240,5 +2516,245 @@ def bar():
         assert!(should_skip_truncation("README.md", &patterns), "*.md should match README.md");
         assert!(should_skip_truncation("docs/guide.txt", &patterns), "docs/** should match docs/guide.txt");
         assert!(!should_skip_truncation("src/main.py", &patterns), "src/main.py should not match");
+    }
+
+    // ═══════════════════════════════════════════════════════════════════════════
+    // TDD TESTS FOR PYTHON PARITY (Gap #1: Non-code file truncation with gaps)
+    // ═══════════════════════════════════════════════════════════════════════════
+
+    #[test]
+    fn test_gap_markers_in_noncode_truncation() {
+        // Python behavior: non-code files get truncated with "keep first 40%, gap, keep last 10%"
+        // This test ensures we create gap markers like "... [N lines omitted] ..."
+
+        // Create a 100-line "non-code" file (like .ai or generic text)
+        let content: String = (1..=100).map(|i| format!("line {}", i)).collect::<Vec<_>>().join("\n");
+
+        // Truncate to 20 lines max (should keep first 8 (40%) + last 2 (10%) = 10 lines)
+        let (result, truncated) = truncate_smart_with_options(&content, 20, "data.ai", true);
+
+        assert!(truncated, "File should be truncated");
+
+        // CRITICAL: Must have a gap marker (Python parity)
+        assert!(
+            result.contains("... [") && result.contains(" lines omitted] ..."),
+            "Non-code truncation must include gap marker '... [N lines omitted] ...'. Got:\n{}",
+            &result[..result.len().min(500)]
+        );
+
+        // Should keep first section
+        assert!(result.contains("line 1"), "Should keep first line");
+
+        // Should keep last section
+        assert!(result.contains("line 100"), "Should keep last line");
+
+        // Gap should omit middle section
+        assert!(!result.contains("line 50"), "Middle lines should be omitted");
+    }
+
+    #[test]
+    fn test_gap_marker_format_matches_python() {
+        // Python format: "\n... [N lines omitted] ...\n"
+        // Verify exact format for byte parity
+
+        let content: String = (1..=50).map(|i| format!("line {}", i)).collect::<Vec<_>>().join("\n");
+        let (result, _) = truncate_smart_with_options(&content, 10, "unknown.xyz", true);
+
+        // Check for Python-compatible format with newlines
+        let has_correct_format = result.contains("\n... [") && result.contains(" lines omitted] ...\n");
+        assert!(
+            has_correct_format,
+            "Gap marker format must match Python: '\\n... [N lines omitted] ...\\n'"
+        );
+    }
+
+    // ═══════════════════════════════════════════════════════════════════════════
+    // TDD TESTS FOR PYTHON PARITY (Gap #2: Structure mode keeps ALL imports)
+    // ═══════════════════════════════════════════════════════════════════════════
+
+    #[test]
+    fn test_structure_mode_keeps_all_imports() {
+        // Python's get_structure_ranges() keeps ALL import lines, not just first 5
+        // This is critical for Python files with many imports
+
+        let python_code = r#"import os
+import sys
+import json
+import re
+import datetime
+import collections
+import itertools
+import functools
+import pathlib
+import typing
+from typing import List, Dict, Optional
+from pathlib import Path
+from dataclasses import dataclass
+
+class MyClass:
+    def __init__(self):
+        self.x = 1
+        self.y = 2
+        self.z = 3
+
+    def method_one(self):
+        return self.x + self.y
+
+    def method_two(self):
+        return self.z * 2
+"#;
+
+        let (result, truncated) = truncate_structure_with_fallback(python_code, "test.py", true, 2000);
+
+        assert!(truncated, "Should be truncated in structure mode");
+
+        // ALL imports should be kept (Python parity)
+        assert!(result.contains("import os"), "Should keep 'import os'");
+        assert!(result.contains("import sys"), "Should keep 'import sys'");
+        assert!(result.contains("import json"), "Should keep 'import json'");
+        assert!(result.contains("import datetime"), "Should keep 'import datetime'");
+        assert!(result.contains("import collections"), "Should keep 'import collections'");
+        assert!(result.contains("import itertools"), "Should keep 'import itertools' (line 7)");
+        assert!(result.contains("import functools"), "Should keep 'import functools' (line 8)");
+        assert!(result.contains("import pathlib"), "Should keep 'import pathlib' (line 9)");
+        assert!(result.contains("import typing"), "Should keep 'import typing' (line 10)");
+        assert!(result.contains("from typing import"), "Should keep 'from typing import' (line 11)");
+        assert!(result.contains("from pathlib import"), "Should keep 'from pathlib import' (line 12)");
+        assert!(result.contains("from dataclasses import"), "Should keep 'from dataclasses import' (line 13)");
+
+        // Class and method signatures should also be kept
+        assert!(result.contains("class MyClass"), "Should keep class definition");
+        assert!(result.contains("def __init__"), "Should keep __init__ method");
+        assert!(result.contains("def method_one"), "Should keep method_one");
+        assert!(result.contains("def method_two"), "Should keep method_two");
+
+        // Implementation details should NOT be kept
+        assert!(!result.contains("self.x = 1"), "Should NOT keep implementation details");
+        assert!(!result.contains("return self.x + self.y"), "Should NOT keep method body");
+    }
+
+    #[test]
+    fn test_structure_mode_keeps_decorators() {
+        // Python structure mode should keep @decorators above functions
+
+        let python_code = r#"import functools
+
+@functools.lru_cache
+def expensive_function(n):
+    result = 0
+    for i in range(n):
+        result += i
+    return result
+
+@property
+def my_property(self):
+    return self._value
+"#;
+
+        let (result, _) = truncate_structure_with_fallback(python_code, "test.py", true, 2000);
+
+        assert!(result.contains("@functools.lru_cache"), "Should keep @decorator");
+        assert!(result.contains("@property"), "Should keep @property decorator");
+        assert!(result.contains("def expensive_function"), "Should keep function signature");
+        assert!(result.contains("def my_property"), "Should keep property method");
+    }
+
+    // ═══════════════════════════════════════════════════════════════════════════
+    // TDD TEST FOR PYTHON PARITY (Gap #4: Markdown files use smart mode, not structure)
+    // ═══════════════════════════════════════════════════════════════════════════
+
+    #[test]
+    fn test_markdown_structure_mode_fallback_to_smart() {
+        // Python behavior: Markdown files have no get_structure_ranges() support
+        // So structure mode falls back to smart mode with gap markers
+        // This is critical for files like HISTORY.md
+
+        let markdown = r#"# Release History
+
+## 2.32.5 (2025-08-18)
+
+**Bugfixes**
+
+- Fixed a bug in the SSLContext caching feature.
+- The Requests team has decided to revert this feature.
+
+## 2.32.4 (2025-07-15)
+
+**Features**
+
+- Added support for Python 3.14.
+
+## 2.32.3 (2025-06-10)
+
+**Deprecations**
+
+- Deprecated old API methods.
+
+Some code example:
+```python
+from requests import Session
+import json
+```
+
+More text here that should be truncated in the middle.
+Line 25
+Line 26
+Line 27
+Line 28
+Line 29
+Line 30
+Line 31
+Line 32
+Line 33
+Line 34
+Line 35
+Line 36
+Line 37
+Line 38
+Line 39
+Line 40
+Line 41
+Line 42
+Line 43
+Line 44
+Line 45
+Line 46
+Line 47
+Line 48
+Line 49
+Line 50
+
+## Final Section
+
+This is the last section.
+"#;
+
+        // Python's markdown get_truncate_ranges uses a "budget" approach
+        // This effectively keeps the first max_lines (simple truncation)
+        let (result, truncated) = truncate_structure_with_fallback(markdown, "HISTORY.md", true, 30);
+
+        assert!(truncated, "Should be truncated");
+
+        // Should NOT use structure mode (which would find "from requests" as import)
+        assert!(
+            !result.contains("STRUCTURE MODE"),
+            "Markdown should NOT use structure mode. Got:\n{}",
+            &result[..result.len().min(600)]
+        );
+
+        // Should use simple truncation (first N lines, no gap markers)
+        // Python's markdown analyzer keeps first max_lines via budget approach
+        assert!(
+            result.contains("TRUNCATED at line"),
+            "Markdown truncation should use simple truncation. Got:\n{}",
+            &result[..result.len().min(800)]
+        );
+
+        // Should keep beginning (first section)
+        assert!(result.contains("# Release History"), "Should keep first header");
+
+        // Simple truncation keeps first N lines, so middle content should be there
+        // but "Final Section" at end would be truncated (expected behavior)
+        assert!(result.contains("**Bugfixes**"), "Should keep early content");
     }
 }
