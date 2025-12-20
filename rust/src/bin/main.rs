@@ -729,8 +729,9 @@ fn main() {
 
         // Serialize selected files with configured format and truncation
         let output = if config.output_format == OutputFormat::ClaudeXml {
-            // Use streaming XmlWriter for ClaudeXml format (Fractal Protocol v2.0)
-            pm_encoder::serialize_entries_claude_xml(&config, &entries)
+            // Use streaming XmlWriter for ClaudeXml format with budget report (Fractal Protocol v2.0)
+            // This includes hotspots/coldspots in attention_map from BudgetReport
+            pm_encoder::serialize_entries_claude_xml_with_report(&config, &entries, &report)
                 .unwrap_or_else(|e| {
                     eprintln!("Error serializing XML: {}", e);
                     std::process::exit(1);

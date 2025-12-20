@@ -1976,7 +1976,12 @@ pub fn serialize_entries_claude_xml(
     let mut writer = XmlWriter::new(&mut buffer, xml_config);
 
     // Build attention entries for metadata
-    let lens_manager = LensManager::new();
+    // Apply active lens for accurate priority calculation
+    let mut lens_manager = LensManager::new();
+    if let Some(ref lens_name) = config.active_lens {
+        let _ = lens_manager.apply_lens(lens_name);
+    }
+
     let attention_entries: Vec<AttentionEntry> = files.iter().map(|f| {
         let priority = lens_manager.get_file_priority(std::path::Path::new(&f.path));
         let tokens = f.content.len() / 4;
@@ -1997,7 +2002,7 @@ pub fn serialize_entries_claude_xml(
 
     for entry in files {
         let language = detect_language(&entry.path);
-        let priority = lens_manager.get_file_priority(std::path::Path::new(&entry.path));
+        let priority = lens_manager.get_static_priority(std::path::Path::new(&entry.path));
 
         // Apply truncation if configured
         let (content, truncated) = if config.truncate_lines > 0 {
@@ -2015,6 +2020,131 @@ pub fn serialize_entries_claude_xml(
         // Build zoom command for truncated files (Phase 4: Fractal affordances)
         let zoom_cmd = if truncated {
             Some(format!("--include {} --truncate 0", entry.path))
+        } else {
+            None
+        };
+
+        writer.write_file(
+            &entry.path,
+            &language,
+            &entry.md5,
+            priority,
+            &content,
+            truncated,
+            original_tokens,
+            zoom_cmd.as_deref(),
+        ).map_err(|e| e.to_string())?;
+    }
+
+    writer.write_files_end().map_err(|e| e.to_string())?;
+    writer.write_context_end().map_err(|e| e.to_string())?;
+    writer.flush().map_err(|e| e.to_string())?;
+
+    String::from_utf8(buffer).map_err(|e| e.to_string())
+}
+
+/// Serialize file entries to Claude-XML format with budget report for dropped files
+///
+/// This enhanced version includes coldspots (dropped files) from the BudgetReport
+/// in the attention_map for full visibility into what was excluded.
+///
+/// # Arguments
+///
+/// * `config` - Encoder configuration
+/// * `files` - File entries to serialize (included files)
+/// * `report` - Budget report containing dropped file information
+///
+/// # Returns
+///
+/// * `Ok(String)` - The serialized XML output
+/// * `Err(String)` - Error message if serialization fails
+pub fn serialize_entries_claude_xml_with_report(
+    config: &EncoderConfig,
+    files: &[FileEntry],
+    report: &crate::budgeting::BudgetReport,
+) -> Result<String, String> {
+    use crate::formats::{XmlWriter, XmlConfig, AttentionEntry};
+
+    let mut buffer = Vec::new();
+
+    // Build XmlConfig from EncoderConfig - use report.used for accurate utilized count
+    let xml_config = XmlConfig {
+        package: "pm_encoder".to_string(),
+        version: VERSION.to_string(),
+        lens: config.active_lens.clone(),
+        token_budget: Some(report.budget),
+        utilized_tokens: Some(report.used),
+        frozen: config.frozen,
+        allow_sensitive: config.allow_sensitive,
+        snapshot_id: if config.frozen { Some("FROZEN_SNAPSHOT".to_string()) } else { None },
+    };
+
+    let mut writer = XmlWriter::new(&mut buffer, xml_config);
+
+    // Build attention entries from included files
+    let mut attention_entries: Vec<AttentionEntry> = report.included_files.iter().map(|(path, priority, tokens, method)| {
+        AttentionEntry {
+            path: path.clone(),
+            priority: *priority,
+            tokens: *tokens,
+            truncated: method == "truncated",
+            dropped: false,
+        }
+    }).collect();
+
+    // Add dropped files as coldspots
+    for (path, priority, tokens) in &report.dropped_files {
+        attention_entries.push(AttentionEntry {
+            path: path.clone(),
+            priority: *priority,
+            tokens: *tokens,
+            truncated: false,
+            dropped: true,
+        });
+    }
+
+    // Sort by priority descending for better attention_map ordering
+    attention_entries.sort_by(|a, b| b.priority.cmp(&a.priority));
+
+    // Apply active lens for priority calculation in file loop
+    let mut lens_manager = LensManager::new();
+    if let Some(ref lens_name) = config.active_lens {
+        let _ = lens_manager.apply_lens(lens_name);
+    }
+
+    // Write XML structure
+    writer.write_context_start().map_err(|e| e.to_string())?;
+    writer.write_metadata(&attention_entries).map_err(|e| e.to_string())?;
+    writer.write_files_start().map_err(|e| e.to_string())?;
+
+    for entry in files {
+        let language = detect_language(&entry.path);
+        let priority = lens_manager.get_static_priority(std::path::Path::new(&entry.path));
+
+        // Check if this file was truncated by the budget strategy
+        let was_truncated = report.included_files.iter()
+            .any(|(p, _, _, m)| p == &entry.path && m == "truncated");
+
+        // Apply truncation if configured or if budget strategy truncated it
+        let (content, truncated) = if was_truncated {
+            // Already truncated by budget strategy - use structure mode
+            let (trunc, _) = truncate_structure(&entry.content, &entry.path);
+            (trunc, true)
+        } else if config.truncate_lines > 0 {
+            truncate_for_xml(&entry.content, config.truncate_lines, &config.truncate_mode)
+        } else {
+            (entry.content.clone(), false)
+        };
+
+        let original_tokens = if truncated {
+            Some(entry.content.len() / 4)
+        } else {
+            None
+        };
+
+        // Build zoom command for truncated files
+        let zoom_cmd = if truncated {
+            Some(format!("pm_encoder --zoom file={}", entry.path))
         } else {
             None
         };
