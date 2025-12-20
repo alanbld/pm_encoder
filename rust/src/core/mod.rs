@@ -25,5 +25,10 @@ pub use models::{FileEntry, EncoderConfig, ProcessedFile, OutputFormat, Config};
 pub use error::{EncoderError, Result};
 pub use walker::{FileWalker, DefaultWalker};
 pub use engine::ContextEngine;
-pub use zoom::{ZoomAction, ZoomTarget, ZoomConfig, ZoomDepth};
+pub use zoom::{
+    ZoomAction, ZoomTarget, ZoomConfig, ZoomDepth,
+    // Fractal Protocol v2
+    ZoomDirection, ZoomHistory, ZoomHistoryEntry,
+    ZoomSession, ZoomSessionStore,
+};
 pub use store::{ContextStore, FileUtility, DEFAULT_ALPHA};

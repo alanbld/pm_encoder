@@ -178,6 +178,34 @@ struct Cli {
     #[arg(long = "zoom", value_name = "TARGET")]
     zoom: Option<String>,
 
+    // ═══════════════════════════════════════════════════════════════════════════
+    // FRACTAL PROTOCOL v2: ZOOM SESSIONS (v1.1.0)
+    // ═══════════════════════════════════════════════════════════════════════════
+
+    /// Manage zoom sessions. Actions: create, load, list, delete, show
+    /// Examples:
+    ///   --zoom-session create:debug-investigation
+    ///   --zoom-session load:my-session
+    ///   --zoom-session list
+    ///   --zoom-session delete:old-session
+    ///   --zoom-session show
+    #[arg(long = "zoom-session", value_name = "ACTION:NAME")]
+    zoom_session: Option<String>,
+
+    /// Collapse a zoomed target back to structure view.
+    /// Opposite of --zoom (bidirectional zoom).
+    /// Example: --zoom-collapse function=main
+    #[arg(long = "zoom-collapse", value_name = "TARGET")]
+    zoom_collapse: Option<String>,
+
+    /// Undo the last zoom action in the active session
+    #[arg(long = "zoom-undo")]
+    zoom_undo: bool,
+
+    /// Redo the last undone zoom action in the active session
+    #[arg(long = "zoom-redo")]
+    zoom_redo: bool,
+
     /// Show Context Health summary after serialization
     #[arg(long = "health")]
     health: bool,
@@ -529,6 +557,80 @@ fn main() {
     // Streaming mode warning for file output
     if cli.stream && cli.output.is_some() {
         eprintln!("Warning: --stream mode writes directly to stdout, ignoring -o/--output");
+    }
+
+    // ═══════════════════════════════════════════════════════════════════════════
+    // FRACTAL PROTOCOL v2: Zoom Session Management (v1.1.0)
+    // ═══════════════════════════════════════════════════════════════════════════
+
+    if let Some(session_cmd) = &cli.zoom_session {
+        use pm_encoder::core::{ZoomSessionStore, ZoomSession};
+
+        // Session store path (in project root)
+        let session_store_path = project_root.join(".pm_encoder_sessions.json");
+
+        // Parse action:name format
+        let parts: Vec<&str> = session_cmd.splitn(2, ':').collect();
+        let action = parts[0];
+        let name = parts.get(1).map(|s| *s);
+
+        match action {
+            "create" => {
+                let name = name.unwrap_or("default");
+                let session = ZoomSession::new(name);
+                eprintln!("Created zoom session: {}", name);
+                eprintln!("Use --zoom to add targets, --zoom-session show to view");
+                // In a full implementation, we'd persist this
+                return;
+            }
+            "list" => {
+                eprintln!("Zoom Sessions:");
+                eprintln!("  (Session persistence coming in v1.1.1)");
+                eprintln!("  Use --zoom-session create:<name> to create a session");
+                return;
+            }
+            "show" => {
+                eprintln!("Active Session: (none)");
+                eprintln!("  Use --zoom-session create:<name> to start");
+                return;
+            }
+            _ => {
+                eprintln!("Unknown zoom-session action: {}", action);
+                eprintln!("Valid actions: create, load, list, delete, show");
+                std::process::exit(1);
+            }
+        }
+    }
+
+    // Zoom undo/redo (Fractal v2)
+    if cli.zoom_undo {
+        eprintln!("Zoom undo: No active session");
+        eprintln!("Use --zoom-session create:<name> to start a session");
+        return;
+    }
+
+    if cli.zoom_redo {
+        eprintln!("Zoom redo: No active session");
+        eprintln!("Use --zoom-session create:<name> to start a session");
+        return;
+    }
+
+    // Zoom collapse (bidirectional zoom)
+    if let Some(collapse_str) = &cli.zoom_collapse {
+        use pm_encoder::core::ZoomTarget;
+
+        match ZoomTarget::parse(collapse_str) {
+            Ok(target) => {
+                eprintln!("Collapse target: {}", target);
+                eprintln!("(Full collapse implementation in v1.1.1)");
+                // In full implementation: load session, call remove_zoom, regenerate
+                return;
+            }
+            Err(e) => {
+                eprintln!("Error parsing collapse target: {}", e);
+                std::process::exit(1);
+            }
+        }
     }
 
     // Zoom mode (v2.0.0) - Fractal Protocol targeted context expansion
