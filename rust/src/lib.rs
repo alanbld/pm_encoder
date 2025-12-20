@@ -38,6 +38,9 @@ pub use formats::{XmlWriter, XmlConfig, XmlError, AttentionEntry, escape_cdata};
 pub use core::{
     EncoderError,
     ZoomAction, ZoomTarget, ZoomConfig, ZoomDepth,
+    // SmartWalker with boundary intelligence
+    SmartWalker, SmartWalkConfig, WalkEntry,
+    ProjectManifest, ProjectType,
 };
 
 /// A file entry with its content and metadata
@@ -876,6 +879,12 @@ pub fn walk_directory_iter(
             // Always include the root directory itself
             if path == root_path_clone {
                 return true;
+            }
+
+            // Apply hygiene exclusions (SmartWalker's "Concentric Scope" model)
+            // These are ALWAYS excluded regardless of user patterns: .venv, node_modules, target, etc.
+            if SmartWalker::is_hygiene_excluded(path) {
+                return false;
             }
 
             // Get relative path for pattern matching

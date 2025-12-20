@@ -1,0 +1,292 @@
+//! Project boundary detection and classification.
+//!
+//! This module detects project roots by looking for manifest files
+//! (Cargo.toml, package.json, etc.) and classifies project types.
+
+use std::collections::HashSet;
+use std::path::{Path, PathBuf};
+
+/// Detected project type based on manifest files.
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub enum ProjectType {
+    /// Rust project (Cargo.toml)
+    Rust,
+    /// Node.js project (package.json)
+    Node,
+    /// Python project (pyproject.toml, setup.py, requirements.txt)
+    Python,
+    /// Go project (go.mod)
+    Go,
+    /// Multiple project types detected
+    Mixed,
+    /// No markers found
+    Unknown,
+}
+
+/// Project boundary information.
+#[derive(Debug, Clone)]
+pub struct ProjectManifest {
+    /// Detected project root (where markers are found).
+    pub root: PathBuf,
+
+    /// Type of project based on manifest files.
+    pub project_type: ProjectType,
+
+    /// Manifest files found (Cargo.toml, package.json, etc.).
+    pub manifest_files: Vec<PathBuf>,
+
+    /// Whether this is a workspace/monorepo.
+    pub is_workspace: bool,
+}
+
+impl ProjectManifest {
+    /// Marker files that indicate project root.
+    const MARKERS: &'static [(&'static str, ProjectType)] = &[
+        ("Cargo.toml", ProjectType::Rust),
+        ("package.json", ProjectType::Node),
+        ("pyproject.toml", ProjectType::Python),
+        ("setup.py", ProjectType::Python),
+        ("go.mod", ProjectType::Go),
+        (".git", ProjectType::Unknown), // Git root as fallback
+    ];
+
+    /// Detect project manifest starting from given path.
+    /// Walks up directory tree looking for marker files.
+    pub fn detect(start_path: &Path) -> Self {
+        let start = if start_path.is_file() {
+            start_path.parent().unwrap_or(start_path)
+        } else {
+            start_path
+        };
+
+        let canonical = start.canonicalize().unwrap_or_else(|_| start.to_path_buf());
+
+        let mut current = Some(canonical.as_path());
+        let mut found_markers: Vec<(PathBuf, ProjectType)> = Vec::new();
+        let mut root = canonical.clone();
+
+        while let Some(dir) = current {
+            for (marker, project_type) in Self::MARKERS {
+                let marker_path = dir.join(marker);
+                if marker_path.exists() {
+                    found_markers.push((marker_path, project_type.clone()));
+                    root = dir.to_path_buf();
+                }
+            }
+
+            // Stop at .git (definitive project root)
+            if dir.join(".git").exists() {
+                root = dir.to_path_buf();
+                break;
+            }
+
+            current = dir.parent();
+        }
+
+        // Determine project type
+        let project_type = Self::determine_type(&found_markers);
+
+        // Check for workspace patterns
+        let is_workspace = Self::detect_workspace(&root, &project_type);
+
+        Self {
+            root,
+            project_type,
+            manifest_files: found_markers.into_iter().map(|(p, _)| p).collect(),
+            is_workspace,
+        }
+    }
+
+    /// Determine project type from found markers.
+    fn determine_type(markers: &[(PathBuf, ProjectType)]) -> ProjectType {
+        let types: HashSet<_> = markers
+            .iter()
+            .filter(|(_, t)| *t != ProjectType::Unknown)
+            .map(|(_, t)| t.clone())
+            .collect();
+
+        match types.len() {
+            0 => ProjectType::Unknown,
+            1 => types.into_iter().next().unwrap(),
+            _ => ProjectType::Mixed,
+        }
+    }
+
+    /// Detect if this is a workspace/monorepo.
+    fn detect_workspace(root: &Path, project_type: &ProjectType) -> bool {
+        match project_type {
+            ProjectType::Rust => {
+                // Check Cargo.toml for [workspace]
+                let cargo_toml = root.join("Cargo.toml");
+                if let Ok(content) = std::fs::read_to_string(&cargo_toml) {
+                    content.contains("[workspace]")
+                } else {
+                    false
+                }
+            }
+            ProjectType::Node => {
+                // Check package.json for "workspaces"
+                let package_json = root.join("package.json");
+                if let Ok(content) = std::fs::read_to_string(&package_json) {
+                    content.contains("\"workspaces\"")
+                } else {
+                    false
+                }
+            }
+            _ => false,
+        }
+    }
+
+    /// Get the project root path.
+    pub fn root(&self) -> &Path {
+        &self.root
+    }
+
+    /// Check if the project is a workspace/monorepo.
+    pub fn is_workspace(&self) -> bool {
+        self.is_workspace
+    }
+
+    /// Get the project type.
+    pub fn project_type(&self) -> &ProjectType {
+        &self.project_type
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::fs;
+    use tempfile::TempDir;
+
+    #[test]
+    fn test_detect_rust_project() {
+        let tmp = TempDir::new().unwrap();
+        fs::write(tmp.path().join("Cargo.toml"), "[package]\nname = \"test\"").unwrap();
+        fs::create_dir(tmp.path().join("src")).unwrap();
+
+        let manifest = ProjectManifest::detect(&tmp.path().join("src"));
+
+        assert_eq!(manifest.project_type, ProjectType::Rust);
+        assert_eq!(manifest.root, tmp.path().canonicalize().unwrap());
+    }
+
+    #[test]
+    fn test_detect_node_project() {
+        let tmp = TempDir::new().unwrap();
+        fs::write(tmp.path().join("package.json"), "{}").unwrap();
+
+        let manifest = ProjectManifest::detect(tmp.path());
+
+        assert_eq!(manifest.project_type, ProjectType::Node);
+    }
+
+    #[test]
+    fn test_detect_python_project() {
+        let tmp = TempDir::new().unwrap();
+        fs::write(tmp.path().join("pyproject.toml"), "[project]").unwrap();
+
+        let manifest = ProjectManifest::detect(tmp.path());
+
+        assert_eq!(manifest.project_type, ProjectType::Python);
+    }
+
+    #[test]
+    fn test_detect_go_project() {
+        let tmp = TempDir::new().unwrap();
+        fs::write(tmp.path().join("go.mod"), "module test").unwrap();
+
+        let manifest = ProjectManifest::detect(tmp.path());
+
+        assert_eq!(manifest.project_type, ProjectType::Go);
+    }
+
+    #[test]
+    fn test_detect_mixed_project() {
+        let tmp = TempDir::new().unwrap();
+        fs::write(tmp.path().join("Cargo.toml"), "[package]").unwrap();
+        fs::write(tmp.path().join("package.json"), "{}").unwrap();
+
+        let manifest = ProjectManifest::detect(tmp.path());
+
+        assert_eq!(manifest.project_type, ProjectType::Mixed);
+    }
+
+    #[test]
+    fn test_detect_rust_workspace() {
+        let tmp = TempDir::new().unwrap();
+        fs::write(
+            tmp.path().join("Cargo.toml"),
+            "[workspace]\nmembers = [\"crates/*\"]",
+        )
+        .unwrap();
+
+        let manifest = ProjectManifest::detect(tmp.path());
+
+        assert!(manifest.is_workspace);
+        assert_eq!(manifest.project_type, ProjectType::Rust);
+    }
+
+    #[test]
+    fn test_detect_node_workspace() {
+        let tmp = TempDir::new().unwrap();
+        fs::write(
+            tmp.path().join("package.json"),
+            r#"{"workspaces": ["packages/*"]}"#,
+        )
+        .unwrap();
+
+        let manifest = ProjectManifest::detect(tmp.path());
+
+        assert!(manifest.is_workspace);
+        assert_eq!(manifest.project_type, ProjectType::Node);
+    }
+
+    #[test]
+    fn test_fallback_to_current_dir() {
+        let tmp = TempDir::new().unwrap();
+        // No markers - should use start path as root
+
+        let manifest = ProjectManifest::detect(tmp.path());
+
+        assert_eq!(manifest.project_type, ProjectType::Unknown);
+    }
+
+    #[test]
+    fn test_detect_from_nested_directory() {
+        let tmp = TempDir::new().unwrap();
+        fs::create_dir_all(tmp.path().join("src/nested/deep")).unwrap();
+        fs::write(tmp.path().join("Cargo.toml"), "[package]").unwrap();
+        fs::write(tmp.path().join("src/nested/deep/file.rs"), "code").unwrap();
+
+        // Start from deep nested directory
+        let manifest = ProjectManifest::detect(&tmp.path().join("src/nested/deep"));
+
+        // Root should be detected at Cargo.toml level
+        assert_eq!(manifest.root, tmp.path().canonicalize().unwrap());
+        assert_eq!(manifest.project_type, ProjectType::Rust);
+    }
+
+    #[test]
+    fn test_git_stops_traversal() {
+        let tmp = TempDir::new().unwrap();
+        fs::create_dir(tmp.path().join(".git")).unwrap();
+        fs::create_dir(tmp.path().join("subdir")).unwrap();
+
+        let manifest = ProjectManifest::detect(&tmp.path().join("subdir"));
+
+        // Should stop at .git
+        assert_eq!(manifest.root, tmp.path().canonicalize().unwrap());
+    }
+
+    #[test]
+    fn test_manifest_files_collected() {
+        let tmp = TempDir::new().unwrap();
+        fs::write(tmp.path().join("Cargo.toml"), "[package]").unwrap();
+        fs::write(tmp.path().join("package.json"), "{}").unwrap();
+
+        let manifest = ProjectManifest::detect(tmp.path());
+
+        assert_eq!(manifest.manifest_files.len(), 2);
+    }
+}

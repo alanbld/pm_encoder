@@ -251,6 +251,359 @@ pub fn read_file_content(bytes: &[u8]) -> Option<String> {
     }
 }
 
+// ============================================================================
+// SmartWalker - Intelligent file walker with boundary awareness
+// ============================================================================
+
+use ignore::{WalkBuilder, WalkState};
+use std::sync::mpsc;
+use crate::core::manifest::ProjectManifest;
+
+/// Hard-coded exclusion patterns (hygiene layer).
+/// These are ALWAYS excluded regardless of .gitignore.
+const HYGIENE_EXCLUSIONS: &[&str] = &[
+    // Version control
+    ".git",
+    ".hg",
+    ".svn",
+    // Package managers / dependencies
+    "node_modules",
+    ".npm",
+    ".yarn",
+    // Python environments
+    ".venv",
+    "venv",
+    "env",
+    "__pycache__",
+    ".pytest_cache",
+    ".mypy_cache",
+    ".ruff_cache",
+    ".eggs",
+    // Build artifacts
+    "target",
+    "dist",
+    "build",
+    "out",
+    "_build",
+    ".build",
+    // IDE / Editor
+    ".idea",
+    ".vscode",
+    // OS artifacts
+    ".DS_Store",
+    "Thumbs.db",
+];
+
+/// Wildcard exclusion patterns (matched by suffix).
+const HYGIENE_WILDCARDS: &[&str] = &[
+    ".egg-info",
+    ".swp",
+    ".swo",
+    ".pyc",
+];
+
+/// Result of walking a directory with SmartWalker.
+#[derive(Debug, Clone)]
+pub struct WalkEntry {
+    /// Absolute path to the file.
+    pub path: std::path::PathBuf,
+    /// Relative path from project root.
+    pub relative_path: std::path::PathBuf,
+    /// Whether this is a file (always true for walk results).
+    pub is_file: bool,
+}
+
+/// Configuration for SmartWalker.
+#[derive(Debug, Clone)]
+pub struct SmartWalkConfig {
+    /// Follow symlinks (default: false for safety).
+    pub follow_symlinks: bool,
+
+    /// Respect .gitignore files (default: true).
+    pub respect_gitignore: bool,
+
+    /// Include hidden files (default: false).
+    pub include_hidden: bool,
+
+    /// Maximum depth to traverse (None = unlimited).
+    pub max_depth: Option<usize>,
+
+    /// Additional patterns to exclude.
+    pub extra_excludes: Vec<String>,
+
+    /// Maximum file size in bytes.
+    pub max_file_size: u64,
+}
+
+impl Default for SmartWalkConfig {
+    fn default() -> Self {
+        Self {
+            follow_symlinks: false,
+            respect_gitignore: true,
+            include_hidden: false,
+            max_depth: None,
+            extra_excludes: vec![],
+            max_file_size: 1_048_576, // 1MB
+        }
+    }
+}
+
+/// Intelligent file walker with boundary awareness.
+///
+/// SmartWalker uses the `ignore` crate for efficient gitignore-aware traversal
+/// and applies a "hygiene layer" that always excludes .venv, node_modules, etc.
+pub struct SmartWalker {
+    root: std::path::PathBuf,
+    manifest: ProjectManifest,
+    config: SmartWalkConfig,
+}
+
+impl SmartWalker {
+    /// Create a new SmartWalker for the given path.
+    pub fn new(path: &Path) -> Self {
+        let manifest = ProjectManifest::detect(path);
+        Self {
+            root: manifest.root.clone(),
+            manifest,
+            config: SmartWalkConfig::default(),
+        }
+    }
+
+    /// Create with custom configuration.
+    pub fn with_config(path: &Path, config: SmartWalkConfig) -> Self {
+        let manifest = ProjectManifest::detect(path);
+        Self {
+            root: manifest.root.clone(),
+            manifest,
+            config,
+        }
+    }
+
+    /// Get the detected project manifest.
+    pub fn manifest(&self) -> &ProjectManifest {
+        &self.manifest
+    }
+
+    /// Get the project root.
+    pub fn root(&self) -> &Path {
+        &self.root
+    }
+
+    /// Check if a path should be excluded by hygiene rules.
+    pub fn is_hygiene_excluded(path: &Path) -> bool {
+        path.components().any(|c| {
+            let name = c.as_os_str().to_string_lossy();
+
+            // Check exact matches
+            if HYGIENE_EXCLUSIONS.iter().any(|&pattern| name == pattern) {
+                return true;
+            }
+
+            // Check wildcard patterns (suffix match)
+            if HYGIENE_WILDCARDS.iter().any(|&pattern| name.ends_with(pattern)) {
+                return true;
+            }
+
+            false
+        })
+    }
+
+    /// Walk the directory and collect file entries.
+    pub fn walk(&self) -> std::result::Result<Vec<WalkEntry>, String> {
+        let mut builder = WalkBuilder::new(&self.root);
+
+        // Configure based on SmartWalkConfig
+        builder
+            .follow_links(self.config.follow_symlinks)
+            .git_ignore(self.config.respect_gitignore)
+            .git_global(self.config.respect_gitignore)
+            .git_exclude(self.config.respect_gitignore)
+            .hidden(!self.config.include_hidden);
+
+        if let Some(depth) = self.config.max_depth {
+            builder.max_depth(Some(depth));
+        }
+
+        // Collect entries
+        let mut entries = Vec::new();
+
+        for result in builder.build() {
+            match result {
+                Ok(entry) => {
+                    let path = entry.path();
+
+                    // Apply hygiene exclusions
+                    if Self::is_hygiene_excluded(path) {
+                        continue;
+                    }
+
+                    // Only include files (not directories)
+                    if entry.file_type().map_or(false, |ft| ft.is_file()) {
+                        // Check file size
+                        if let Ok(meta) = entry.metadata() {
+                            if meta.len() > self.config.max_file_size {
+                                continue;
+                            }
+                        }
+
+                        let relative = path
+                            .strip_prefix(&self.root)
+                            .unwrap_or(path)
+                            .to_path_buf();
+
+                        entries.push(WalkEntry {
+                            path: path.to_path_buf(),
+                            relative_path: relative,
+                            is_file: true,
+                        });
+                    }
+                }
+                Err(e) => {
+                    // Log but don't fail on permission errors, etc.
+                    eprintln!("[WARN] Walk error: {}", e);
+                }
+            }
+        }
+
+        Ok(entries)
+    }
+
+    /// Walk with parallel processing (for large repos).
+    pub fn walk_parallel(&self) -> std::result::Result<Vec<WalkEntry>, String> {
+        let mut builder = WalkBuilder::new(&self.root);
+
+        builder
+            .follow_links(self.config.follow_symlinks)
+            .git_ignore(self.config.respect_gitignore)
+            .hidden(!self.config.include_hidden);
+
+        let (tx, rx) = mpsc::channel();
+        let root = self.root.clone();
+        let max_file_size = self.config.max_file_size;
+
+        builder.build_parallel().run(|| {
+            let tx = tx.clone();
+            let root = root.clone();
+
+            Box::new(move |entry| {
+                let entry = match entry {
+                    Ok(e) => e,
+                    Err(_) => return WalkState::Continue,
+                };
+
+                let path = entry.path();
+
+                // Hygiene check - skip entire subtree for directories
+                if Self::is_hygiene_excluded(path) {
+                    if entry.file_type().map_or(false, |ft| ft.is_dir()) {
+                        return WalkState::Skip;
+                    }
+                    return WalkState::Continue;
+                }
+
+                if entry.file_type().map_or(false, |ft| ft.is_file()) {
+                    // Check file size
+                    if let Ok(meta) = entry.metadata() {
+                        if meta.len() > max_file_size {
+                            return WalkState::Continue;
+                        }
+                    }
+
+                    let relative = path.strip_prefix(&root).unwrap_or(path).to_path_buf();
+
+                    let _ = tx.send(WalkEntry {
+                        path: path.to_path_buf(),
+                        relative_path: relative,
+                        is_file: true,
+                    });
+                }
+
+                WalkState::Continue
+            })
+        });
+
+        drop(tx); // Close sender
+
+        let entries: Vec<_> = rx.into_iter().collect();
+        Ok(entries)
+    }
+
+    /// Convert walk entries to FileEntry format for compatibility.
+    pub fn walk_as_file_entries(&self) -> Result<Vec<FileEntry>> {
+        let walk_entries = self.walk().map_err(|e| EncoderError::invalid_config(e))?;
+
+        let mut file_entries = Vec::new();
+
+        for entry in walk_entries {
+            // Read file content
+            let bytes = match std::fs::read(&entry.path) {
+                Ok(b) => b,
+                Err(_) => continue,
+            };
+
+            // Skip binary files
+            if is_binary(&bytes) {
+                continue;
+            }
+
+            // Convert to string
+            let content = match read_file_content(&bytes) {
+                Some(c) => c,
+                None => continue,
+            };
+
+            // Get timestamps
+            let (mtime, ctime) = std::fs::metadata(&entry.path)
+                .map(|m| {
+                    let mtime = m
+                        .modified()
+                        .ok()
+                        .and_then(|t| t.duration_since(SystemTime::UNIX_EPOCH).ok())
+                        .map(|d| d.as_secs())
+                        .unwrap_or(0);
+                    let ctime = m
+                        .created()
+                        .ok()
+                        .and_then(|t| t.duration_since(SystemTime::UNIX_EPOCH).ok())
+                        .map(|d| d.as_secs())
+                        .unwrap_or(mtime);
+                    (mtime, ctime)
+                })
+                .unwrap_or((0, 0));
+
+            file_entries.push(
+                FileEntry::new(entry.relative_path.to_string_lossy().into_owned(), content)
+                    .with_timestamps(mtime, ctime),
+            );
+        }
+
+        Ok(file_entries)
+    }
+}
+
+impl FileWalker for SmartWalker {
+    fn walk(&self, _root: &str, config: &WalkConfig) -> Result<Vec<FileEntry>> {
+        // Create a new SmartWalker with merged config
+        let smart_config = SmartWalkConfig {
+            max_file_size: config.max_file_size,
+            extra_excludes: config.ignore_patterns.clone(),
+            ..self.config.clone()
+        };
+
+        let walker = SmartWalker {
+            root: self.root.clone(),
+            manifest: self.manifest.clone(),
+            config: smart_config,
+        };
+
+        walker.walk_as_file_entries()
+    }
+
+    fn should_ignore(&self, path: &str, _patterns: &[String]) -> bool {
+        Self::is_hygiene_excluded(Path::new(path))
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -333,5 +686,217 @@ mod tests {
     fn test_matches_patterns_glob() {
         assert!(DefaultWalker::matches_patterns("test.pyc", &vec!["*.pyc".to_string()]));
         assert!(!DefaultWalker::matches_patterns("test.py", &vec!["*.pyc".to_string()]));
+    }
+
+    // ========================================================================
+    // SmartWalker Tests
+    // ========================================================================
+
+    fn create_pollution_test_project(tmp: &TempDir) {
+        // Create project structure
+        fs::create_dir_all(tmp.path().join("src")).unwrap();
+        fs::create_dir_all(tmp.path().join(".venv/lib")).unwrap();
+        fs::create_dir_all(tmp.path().join("node_modules/lodash")).unwrap();
+        fs::create_dir_all(tmp.path().join("target/debug")).unwrap();
+        fs::create_dir_all(tmp.path().join("__pycache__")).unwrap();
+        fs::create_dir_all(tmp.path().join(".git/objects")).unwrap();
+
+        // Create files
+        fs::write(tmp.path().join("Cargo.toml"), "[package]\nname = \"test\"").unwrap();
+        fs::write(tmp.path().join("src/main.rs"), "fn main() {}").unwrap();
+        fs::write(tmp.path().join("src/lib.rs"), "pub fn hello() {}").unwrap();
+        fs::write(tmp.path().join(".venv/lib/secrets.py"), "SECRET='bad'").unwrap();
+        fs::write(
+            tmp.path().join("node_modules/lodash/index.js"),
+            "module.exports = {}",
+        )
+        .unwrap();
+        fs::write(tmp.path().join("target/debug/binary"), "ELF").unwrap();
+        fs::write(tmp.path().join("__pycache__/module.pyc"), "bytecode").unwrap();
+    }
+
+    #[test]
+    fn test_smart_walker_excludes_venv() {
+        let tmp = TempDir::new().unwrap();
+        create_pollution_test_project(&tmp);
+
+        let walker = SmartWalker::new(tmp.path());
+        let entries = walker.walk().unwrap();
+
+        let paths: Vec<_> = entries
+            .iter()
+            .map(|e| e.relative_path.to_string_lossy().to_string())
+            .collect();
+
+        // Should include src files
+        assert!(paths.iter().any(|p| p.contains("main.rs")));
+        assert!(paths.iter().any(|p| p.contains("lib.rs")));
+
+        // Should exclude .venv
+        assert!(!paths.iter().any(|p| p.contains(".venv")));
+        assert!(!paths.iter().any(|p| p.contains("secrets.py")));
+    }
+
+    #[test]
+    fn test_smart_walker_excludes_node_modules() {
+        let tmp = TempDir::new().unwrap();
+        create_pollution_test_project(&tmp);
+
+        let walker = SmartWalker::new(tmp.path());
+        let entries = walker.walk().unwrap();
+
+        let paths: Vec<_> = entries
+            .iter()
+            .map(|e| e.relative_path.to_string_lossy().to_string())
+            .collect();
+
+        assert!(!paths.iter().any(|p| p.contains("node_modules")));
+        assert!(!paths.iter().any(|p| p.contains("lodash")));
+    }
+
+    #[test]
+    fn test_smart_walker_excludes_target() {
+        let tmp = TempDir::new().unwrap();
+        create_pollution_test_project(&tmp);
+
+        let walker = SmartWalker::new(tmp.path());
+        let entries = walker.walk().unwrap();
+
+        let paths: Vec<_> = entries
+            .iter()
+            .map(|e| e.relative_path.to_string_lossy().to_string())
+            .collect();
+
+        assert!(!paths.iter().any(|p| p.contains("target")));
+    }
+
+    #[test]
+    fn test_smart_walker_excludes_pycache() {
+        let tmp = TempDir::new().unwrap();
+        create_pollution_test_project(&tmp);
+
+        let walker = SmartWalker::new(tmp.path());
+        let entries = walker.walk().unwrap();
+
+        let paths: Vec<_> = entries
+            .iter()
+            .map(|e| e.relative_path.to_string_lossy().to_string())
+            .collect();
+
+        assert!(!paths.iter().any(|p| p.contains("__pycache__")));
+        assert!(!paths.iter().any(|p| p.contains(".pyc")));
+    }
+
+    #[test]
+    fn test_smart_walker_excludes_git() {
+        let tmp = TempDir::new().unwrap();
+        create_pollution_test_project(&tmp);
+
+        let walker = SmartWalker::new(tmp.path());
+        let entries = walker.walk().unwrap();
+
+        let paths: Vec<_> = entries
+            .iter()
+            .map(|e| e.relative_path.to_string_lossy().to_string())
+            .collect();
+
+        assert!(!paths.iter().any(|p| p.contains(".git")));
+    }
+
+    #[test]
+    fn test_hygiene_exclusion_check() {
+        assert!(SmartWalker::is_hygiene_excluded(Path::new(
+            "/project/.venv/lib/foo.py"
+        )));
+        assert!(SmartWalker::is_hygiene_excluded(Path::new(
+            "/project/node_modules/x/y.js"
+        )));
+        assert!(SmartWalker::is_hygiene_excluded(Path::new(
+            "/project/target/debug/bin"
+        )));
+        assert!(SmartWalker::is_hygiene_excluded(Path::new(
+            "/project/__pycache__/x.pyc"
+        )));
+        assert!(SmartWalker::is_hygiene_excluded(Path::new(
+            "/project/.vscode/settings.json"
+        )));
+        assert!(SmartWalker::is_hygiene_excluded(Path::new(
+            "/project/pkg.egg-info/PKG-INFO"
+        )));
+
+        assert!(!SmartWalker::is_hygiene_excluded(Path::new(
+            "/project/src/main.rs"
+        )));
+        assert!(!SmartWalker::is_hygiene_excluded(Path::new(
+            "/project/lib/utils.py"
+        )));
+    }
+
+    #[test]
+    fn test_smart_walker_parallel_same_result() {
+        let tmp = TempDir::new().unwrap();
+        create_pollution_test_project(&tmp);
+
+        let walker = SmartWalker::new(tmp.path());
+
+        let sequential = walker.walk().unwrap();
+        let parallel = walker.walk_parallel().unwrap();
+
+        // Same count (order may differ)
+        assert_eq!(sequential.len(), parallel.len());
+    }
+
+    #[test]
+    fn test_smart_walker_detects_project_root() {
+        let tmp = TempDir::new().unwrap();
+        fs::create_dir_all(tmp.path().join("src/nested/deep")).unwrap();
+        fs::write(tmp.path().join("Cargo.toml"), "[package]").unwrap();
+        fs::write(tmp.path().join("src/nested/deep/file.rs"), "code").unwrap();
+
+        // Start from deep nested directory
+        let walker = SmartWalker::new(&tmp.path().join("src/nested/deep"));
+
+        // Root should be detected at Cargo.toml level
+        assert_eq!(walker.manifest().root, tmp.path().canonicalize().unwrap());
+    }
+
+    #[test]
+    fn test_smart_walker_as_file_entries() {
+        let tmp = TempDir::new().unwrap();
+        fs::create_dir_all(tmp.path().join("src")).unwrap();
+        fs::write(tmp.path().join("Cargo.toml"), "[package]").unwrap();
+        fs::write(tmp.path().join("src/main.rs"), "fn main() {}").unwrap();
+
+        let walker = SmartWalker::new(tmp.path());
+        let entries = walker.walk_as_file_entries().unwrap();
+
+        assert!(entries.len() >= 1);
+        assert!(entries.iter().any(|e| e.path.contains("main.rs")));
+    }
+
+    #[test]
+    fn test_smart_walker_file_walker_trait() {
+        let tmp = TempDir::new().unwrap();
+        create_pollution_test_project(&tmp);
+
+        let walker = SmartWalker::new(tmp.path());
+        let config = WalkConfig::default();
+        let entries = FileWalker::walk(&walker, tmp.path().to_str().unwrap(), &config).unwrap();
+
+        // Should include project files
+        assert!(entries.iter().any(|e| e.path.contains("main.rs")));
+
+        // Should exclude pollution
+        assert!(!entries.iter().any(|e| e.path.contains(".venv")));
+        assert!(!entries.iter().any(|e| e.path.contains("node_modules")));
+    }
+
+    #[test]
+    fn test_smart_walk_config_default() {
+        let config = SmartWalkConfig::default();
+        assert!(!config.follow_symlinks);
+        assert!(config.respect_gitignore);
+        assert!(!config.include_hidden);
+        assert_eq!(config.max_file_size, 1_048_576);
     }
 }

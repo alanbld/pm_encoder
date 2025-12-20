@@ -7,7 +7,8 @@
 //!
 //! - `models`: Core data structures (FileEntry, EncoderConfig, ProcessedFile)
 //! - `error`: Error types using thiserror
-//! - `walker`: Directory traversal with FileWalker trait
+//! - `walker`: Directory traversal with FileWalker trait + SmartWalker
+//! - `manifest`: Project boundary detection
 //! - `serialization`: Output format serializers
 //! - `engine`: Main ContextEngine orchestration
 //! - `zoom`: Fractal Protocol zoom actions
@@ -15,6 +16,7 @@
 pub mod models;
 pub mod error;
 pub mod walker;
+pub mod manifest;
 pub mod serialization;
 pub mod engine;
 pub mod zoom;
@@ -24,7 +26,8 @@ pub mod search;
 // Re-export commonly used types
 pub use models::{FileEntry, EncoderConfig, ProcessedFile, OutputFormat, Config};
 pub use error::{EncoderError, Result};
-pub use walker::{FileWalker, DefaultWalker};
+pub use walker::{FileWalker, DefaultWalker, SmartWalker, SmartWalkConfig, WalkEntry};
+pub use manifest::{ProjectManifest, ProjectType};
 pub use engine::ContextEngine;
 pub use zoom::{
     ZoomAction, ZoomTarget, ZoomConfig, ZoomDepth,
