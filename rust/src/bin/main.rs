@@ -790,12 +790,79 @@ fn main() {
 
     // Zoom mode (v2.0.0) - Fractal Protocol targeted context expansion
     if let Some(zoom_str) = &cli.zoom {
-        let zoom_config = match parse_zoom_target(zoom_str) {
+        let mut zoom_config = match parse_zoom_target(zoom_str) {
             Ok(config) => config,
             Err(e) => {
                 eprintln!("Error: {}", e);
                 std::process::exit(1);
             }
+        };
+
+        // ═══════════════════════════════════════════════════════════════════════════
+        // FRACTAL PROTOCOL v2: Cross-File Symbol Resolution
+        // ═══════════════════════════════════════════════════════════════════════════
+        // Convert Function/Class/Module targets to File targets with resolved locations
+        use pm_encoder::core::{SymbolResolver, SymbolType};
+
+        let resolved_file: Option<String> = match &zoom_config.target {
+            ZoomTarget::Function(name) => {
+                let resolver = SymbolResolver::new()
+                    .with_ignore(config.ignore_patterns.clone());
+
+                match resolver.find_function(name, &project_root) {
+                    Ok(loc) => {
+                        eprintln!("Found {} at {}:{}-{}", name, loc.path, loc.start_line, loc.end_line);
+                        eprintln!("  Signature: {}", loc.signature);
+
+                        // Convert to file target with resolved lines
+                        zoom_config.target = ZoomTarget::File {
+                            path: loc.path.clone(),
+                            start_line: Some(loc.start_line),
+                            end_line: Some(loc.end_line),
+                        };
+                        Some(loc.path)
+                    }
+                    Err(e) => {
+                        eprintln!("Symbol resolution failed: {}", e);
+                        std::process::exit(1);
+                    }
+                }
+            }
+            ZoomTarget::Class(name) => {
+                let resolver = SymbolResolver::new()
+                    .with_ignore(config.ignore_patterns.clone());
+
+                match resolver.find_class(name, &project_root) {
+                    Ok(loc) => {
+                        eprintln!("Found {} {} at {}:{}-{}",
+                            loc.symbol_type, name, loc.path, loc.start_line, loc.end_line);
+                        eprintln!("  Signature: {}", loc.signature);
+
+                        zoom_config.target = ZoomTarget::File {
+                            path: loc.path.clone(),
+                            start_line: Some(loc.start_line),
+                            end_line: Some(loc.end_line),
+                        };
+                        Some(loc.path)
+                    }
+                    Err(e) => {
+                        eprintln!("Symbol resolution failed: {}", e);
+                        std::process::exit(1);
+                    }
+                }
+            }
+            ZoomTarget::Module(name) => {
+                // Module resolution: find files matching the module name
+                let module_patterns = vec![
+                    format!("{}.rs", name),
+                    format!("{}.py", name),
+                    format!("{}/mod.rs", name),
+                    format!("{}/__init__.py", name),
+                ];
+                eprintln!("Module zoom: Looking for files matching {:?}", module_patterns);
+                None // Keep as-is, engine will handle module zoom
+            }
+            ZoomTarget::File { path, .. } => Some(path.clone()),
         };
 
         // Build engine with current config
@@ -829,24 +896,12 @@ fn main() {
                 // When a file is zoomed into, we bump its utility by +0.05
                 // This teaches the system that zoomed files are likely relevant
                 if !config.frozen {
-                    let store_path = ContextStore::default_path(&project_root);
-                    let mut store = ContextStore::load_from_file(&store_path);
+                    if let Some(file_path) = &resolved_file {
+                        let store_path = ContextStore::default_path(&project_root);
+                        let mut store = ContextStore::load_from_file(&store_path);
 
-                    // Extract file path from zoom target
-                    let zoom_file = match &zoom_config.target {
-                        ZoomTarget::File { path, .. } => Some(path.clone()),
-                        ZoomTarget::Function(_) | ZoomTarget::Class(_) | ZoomTarget::Module(_) => {
-                            // For function/class/module zoom, we'd need to find which file it's in
-                            // For now, we can't determine this without more context
-                            // Future enhancement: engine.zoom could return the file path
-                            eprintln!("Note: Zoom utility bump only applies to file zoom targets");
-                            None
-                        }
-                    };
-
-                    if let Some(file_path) = zoom_file {
                         const ZOOM_BUMP: f64 = 0.05;
-                        store.bump_utility(&file_path, ZOOM_BUMP, DEFAULT_ALPHA);
+                        store.bump_utility(file_path, ZOOM_BUMP, DEFAULT_ALPHA);
 
                         if let Err(e) = store.save_to_file(&store_path) {
                             eprintln!("Warning: Could not save zoom utility bump: {}", e);

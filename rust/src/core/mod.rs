@@ -19,6 +19,7 @@ pub mod serialization;
 pub mod engine;
 pub mod zoom;
 pub mod store;
+pub mod search;
 
 // Re-export commonly used types
 pub use models::{FileEntry, EncoderConfig, ProcessedFile, OutputFormat, Config};
@@ -32,3 +33,4 @@ pub use zoom::{
     ZoomSession, ZoomSessionStore,
 };
 pub use store::{ContextStore, FileUtility, DEFAULT_ALPHA};
+pub use search::{SymbolResolver, SymbolLocation, SymbolType};

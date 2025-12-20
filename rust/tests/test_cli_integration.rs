@@ -317,8 +317,8 @@ fn test_zoom_nonexistent_target() {
 
     cmd.assert()
         .failure()
-        .stderr(predicate::str::contains("Zoom error"))
-        .stderr(predicate::str::contains("Invalid zoom target"));
+        .stderr(predicate::str::contains("Symbol resolution failed"))
+        .stderr(predicate::str::contains("not found"));
 }
 
 #[test]
