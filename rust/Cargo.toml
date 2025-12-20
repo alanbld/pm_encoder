@@ -35,8 +35,8 @@ globset = "0.4"
 regex = "1.10"
 lazy_static = "1.4"
 chrono = "0.4"
-
-# CLI-only dependencies
+thiserror = "1.0"
+anyhow = "1.0"
 clap = { version = "4.4", features = ["derive"] }
 walkdir = "2.4"
 
@@ -51,3 +51,7 @@ schemars_1 = { package = "schemars", version = "1.1", optional = true }
 
 [target.'cfg(target_arch = "wasm32")'.dependencies]
 getrandom = { version = "0.2", features = ["js"] }
+
+[dev-dependencies]
+mockall = "0.12"
+tempfile = "3.10"

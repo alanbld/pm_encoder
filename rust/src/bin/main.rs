@@ -12,6 +12,7 @@
 
 use clap::{Parser, ValueEnum};
 use pm_encoder::{self, EncoderConfig, LensManager, OutputFormat, parse_token_budget, apply_token_budget};
+use pm_encoder::core::{ContextEngine, ZoomConfig, ZoomTarget};
 use std::path::PathBuf;
 
 /// Serialize project files into the Plus/Minus format with intelligent truncation.
@@ -161,6 +162,21 @@ struct Cli {
     /// Default behavior excludes PII for privacy protection.
     #[arg(long = "allow-sensitive")]
     allow_sensitive: bool,
+
+    // ═══════════════════════════════════════════════════════════════════════════
+    // ZOOM / FRACTAL PROTOCOL (v2.0.0)
+    // ═══════════════════════════════════════════════════════════════════════════
+
+    /// Zoom into a specific target for detailed context.
+    /// Format: <TYPE>=<TARGET>
+    /// Types:
+    ///   fn=<name>           - Zoom to function definition
+    ///   class=<name>        - Zoom to class/struct definition
+    ///   mod=<name>          - Zoom to module
+    ///   file=<path>         - Zoom to entire file
+    ///   file=<path>:L1-L2   - Zoom to file lines L1 to L2
+    #[arg(long = "zoom", value_name = "TARGET")]
+    zoom: Option<String>,
 }
 
 #[derive(Debug, Clone, Copy, ValueEnum)]
@@ -206,6 +222,83 @@ enum BudgetStrategy {
     Drop,
     Truncate,
     Hybrid,
+}
+
+/// Parse a zoom target string into ZoomConfig.
+/// Formats:
+///   fn=<name>           - Zoom to function
+///   class=<name>        - Zoom to class/struct
+///   mod=<name>          - Zoom to module
+///   file=<path>         - Zoom to entire file
+///   file=<path>:L1-L2   - Zoom to file lines L1 to L2
+fn parse_zoom_target(s: &str) -> Result<ZoomConfig, String> {
+    let parts: Vec<&str> = s.splitn(2, '=').collect();
+    if parts.len() != 2 {
+        return Err(format!(
+            "Invalid zoom format: '{}'. Expected <TYPE>=<TARGET> (e.g., fn=main, file=src/lib.rs:10-50)",
+            s
+        ));
+    }
+
+    let zoom_type = parts[0].to_lowercase();
+    let target_str = parts[1];
+
+    let target = match zoom_type.as_str() {
+        "fn" | "function" => ZoomTarget::Function(target_str.to_string()),
+        "class" | "struct" => ZoomTarget::Class(target_str.to_string()),
+        "mod" | "module" => ZoomTarget::Module(target_str.to_string()),
+        "file" => {
+            // Check for line range: file=path:L1-L2
+            if let Some(colon_pos) = target_str.rfind(':') {
+                let path = &target_str[..colon_pos];
+                let range = &target_str[colon_pos + 1..];
+
+                // Parse line range (e.g., "10-50" or "10")
+                let (start, end) = if let Some(dash_pos) = range.find('-') {
+                    let start: usize = range[..dash_pos]
+                        .parse()
+                        .map_err(|_| format!("Invalid start line in range: '{}'", range))?;
+                    let end: usize = range[dash_pos + 1..]
+                        .parse()
+                        .map_err(|_| format!("Invalid end line in range: '{}'", range))?;
+                    (Some(start), Some(end))
+                } else {
+                    // Single line number means start from that line
+                    let line: usize = range
+                        .parse()
+                        .map_err(|_| format!("Invalid line number: '{}'", range))?;
+                    (Some(line), None)
+                };
+
+                ZoomTarget::File {
+                    path: path.to_string(),
+                    start_line: start,
+                    end_line: end,
+                }
+            } else {
+                // No line range, zoom to entire file
+                ZoomTarget::File {
+                    path: target_str.to_string(),
+                    start_line: None,
+                    end_line: None,
+                }
+            }
+        }
+        _ => {
+            return Err(format!(
+                "Unknown zoom type: '{}'. Valid types: fn, class, mod, file",
+                zoom_type
+            ));
+        }
+    };
+
+    Ok(ZoomConfig {
+        target,
+        budget: None,
+        depth: pm_encoder::core::ZoomDepth::Full,
+        include_tests: false,
+        context_lines: 5,
+    })
 }
 
 fn main() {
@@ -301,6 +394,63 @@ fn main() {
     // Streaming mode warning for file output
     if cli.stream && cli.output.is_some() {
         eprintln!("Warning: --stream mode writes directly to stdout, ignoring -o/--output");
+    }
+
+    // Zoom mode (v2.0.0) - Fractal Protocol targeted context expansion
+    if let Some(zoom_str) = &cli.zoom {
+        let zoom_config = match parse_zoom_target(zoom_str) {
+            Ok(config) => config,
+            Err(e) => {
+                eprintln!("Error: {}", e);
+                std::process::exit(1);
+            }
+        };
+
+        // Build engine with current config
+        let engine = ContextEngine::with_config(pm_encoder::core::EncoderConfig {
+            ignore_patterns: config.ignore_patterns.clone(),
+            include_patterns: config.include_patterns.clone(),
+            max_file_size: config.max_file_size,
+            truncate_lines: config.truncate_lines,
+            truncate_mode: config.truncate_mode.clone(),
+            sort_by: config.sort_by.clone(),
+            sort_order: config.sort_order.clone(),
+            stream: config.stream,
+            truncate_summary: config.truncate_summary,
+            truncate_exclude: config.truncate_exclude.clone(),
+            truncate_stats: config.truncate_stats,
+            output_format: match config.output_format {
+                OutputFormat::PlusMinus => pm_encoder::core::OutputFormat::PlusMinus,
+                OutputFormat::Xml => pm_encoder::core::OutputFormat::Xml,
+                OutputFormat::Markdown => pm_encoder::core::OutputFormat::Markdown,
+                OutputFormat::ClaudeXml => pm_encoder::core::OutputFormat::ClaudeXml,
+            },
+            frozen: config.frozen,
+            allow_sensitive: config.allow_sensitive,
+            active_lens: config.active_lens.clone(),
+            token_budget: config.token_budget,
+        });
+
+        match engine.zoom(project_root.to_str().unwrap(), &zoom_config) {
+            Ok(output) => {
+                if let Some(output_path) = cli.output {
+                    match std::fs::write(&output_path, &output) {
+                        Ok(_) => eprintln!("Zoom output written to: {}", output_path.display()),
+                        Err(e) => {
+                            eprintln!("Error writing output: {}", e);
+                            std::process::exit(1);
+                        }
+                    }
+                } else {
+                    print!("{}", output);
+                }
+            }
+            Err(e) => {
+                eprintln!("Zoom error: {}", e);
+                std::process::exit(1);
+            }
+        }
+        return;
     }
 
     // Init-prompt mode (v0.9.0) - Generate CLAUDE.md/GEMINI_INSTRUCTIONS.txt + CONTEXT.txt

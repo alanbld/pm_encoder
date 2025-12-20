@@ -10,6 +10,10 @@ use pm_encoder::{
     ContextEngine, EncoderConfig, LensManager,
     parse_token_budget, apply_token_budget,
 };
+use pm_encoder::core::{
+    ContextEngine as CoreContextEngine,
+    ZoomConfig, ZoomTarget, ZoomDepth,
+};
 use rmcp::{
     schemars,
     schemars::JsonSchema,
@@ -62,12 +66,33 @@ struct FileInput {
 #[derive(Debug, Deserialize, JsonSchema)]
 struct ListLensesParams {}
 
+/// Input for zoom_context tool
+#[derive(Debug, Deserialize, JsonSchema)]
+struct ZoomContextParams {
+    /// Root directory to search in
+    root: String,
+    /// Zoom target type: "fn", "class", "mod", or "file"
+    target_type: String,
+    /// Target name (function name, class name, module name, or file path)
+    target_name: String,
+    /// Optional line range for file zoom (e.g., "10-50")
+    #[serde(default)]
+    line_range: Option<String>,
+    /// Zoom depth: "signature", "implementation", or "full"
+    #[serde(default)]
+    depth: Option<String>,
+    /// Token budget for zoomed content
+    #[serde(default)]
+    token_budget: Option<usize>,
+}
+
 impl PmEncoderServer {
     fn new() -> Self {
         // Build the tool router with our tools
         let tool_router = ToolRouter::new()
             .with_route(Self::get_context_route())
-            .with_route(Self::list_lenses_route());
+            .with_route(Self::list_lenses_route())
+            .with_route(Self::zoom_context_route());
 
         Self { tool_router }
     }
@@ -181,6 +206,83 @@ impl PmEncoderServer {
             })
         })
     }
+
+    fn zoom_context_route() -> rmcp::handler::server::tool::ToolRoute<Self> {
+        let tool = Tool::new(
+            "zoom_context",
+            "Zoom into a specific code element for detailed context. Use after seeing a ZOOM_AFFORDANCE marker in truncated content.",
+            rmcp::handler::server::tool::schema_for_type::<ZoomContextParams>(),
+        );
+
+        rmcp::handler::server::tool::ToolRoute::new_dyn(tool, |ctx| {
+            Box::pin(async move {
+                let params: ZoomContextParams = rmcp::handler::server::tool::parse_json_object(
+                    ctx.arguments.unwrap_or_default(),
+                )?;
+
+                // Parse zoom target
+                let target = match params.target_type.to_lowercase().as_str() {
+                    "fn" | "function" => ZoomTarget::Function(params.target_name.clone()),
+                    "class" | "struct" => ZoomTarget::Class(params.target_name.clone()),
+                    "mod" | "module" => ZoomTarget::Module(params.target_name.clone()),
+                    "file" => {
+                        // Parse optional line range
+                        let (start, end) = if let Some(ref range) = params.line_range {
+                            if let Some(dash_pos) = range.find('-') {
+                                let start: Option<usize> = range[..dash_pos].parse().ok();
+                                let end: Option<usize> = range[dash_pos + 1..].parse().ok();
+                                (start, end)
+                            } else {
+                                (range.parse().ok(), None)
+                            }
+                        } else {
+                            (None, None)
+                        };
+                        ZoomTarget::File {
+                            path: params.target_name.clone(),
+                            start_line: start,
+                            end_line: end,
+                        }
+                    }
+                    _ => {
+                        return Err(rmcp::ErrorData::invalid_params(
+                            format!(
+                                "Invalid target_type '{}'. Use: fn, class, mod, or file",
+                                params.target_type
+                            ),
+                            None,
+                        ));
+                    }
+                };
+
+                // Parse zoom depth
+                let depth = params
+                    .depth
+                    .as_ref()
+                    .and_then(|d| ZoomDepth::from_str(d))
+                    .unwrap_or(ZoomDepth::Full);
+
+                // Build zoom config
+                let zoom_config = ZoomConfig {
+                    target,
+                    budget: params.token_budget,
+                    depth,
+                    include_tests: false,
+                    context_lines: 5,
+                };
+
+                // Create core engine and perform zoom
+                let engine = CoreContextEngine::new();
+                match engine.zoom(&params.root, &zoom_config) {
+                    Ok(content) => Ok(CallToolResult::success(vec![Content::text(content)])),
+                    Err(e) => Err(rmcp::ErrorData::invalid_params(
+                        format!("Zoom failed: {}", e),
+                        None,
+                    )),
+                }
+            })
+        })
+    }
 }
 
 impl ServerHandler for PmEncoderServer {
@@ -200,7 +302,8 @@ impl ServerHandler for PmEncoderServer {
             },
             instructions: Some(
                 "Use get_context to serialize code files into LLM-optimized context. \
-                 Use list_lenses to see available context lenses."
+                 Use list_lenses to see available context lenses. \
+                 Use zoom_context to expand truncated content (follow ZOOM_AFFORDANCE markers)."
                     .into(),
             ),
         }

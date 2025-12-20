@@ -24,6 +24,7 @@ use walkdir::WalkDir;
 
 pub mod analyzers;
 pub mod budgeting;
+pub mod core;
 pub mod formats;
 pub mod init;
 pub mod lenses;
@@ -31,6 +32,12 @@ pub mod lenses;
 pub use lenses::{LensManager, LensConfig, AppliedLens};
 pub use budgeting::{TokenEstimator, BudgetReport, parse_token_budget, apply_token_budget, FileData};
 pub use formats::{XmlWriter, XmlConfig, XmlError, AttentionEntry, escape_cdata};
+
+// Re-export core types for backwards compatibility
+pub use core::{
+    EncoderError,
+    ZoomAction, ZoomTarget, ZoomConfig, ZoomDepth,
+};
 
 /// A file entry with its content and metadata
 #[derive(Debug, Clone)]
@@ -1052,11 +1059,12 @@ pub fn truncate_simple_with_options(
     if include_summary {
         let reduced_pct = (total_lines - max_lines) * 100 / total_lines;
         let marker = format!(
-            "\n\n{}\nTRUNCATED at line {}/{} ({}% reduction)\nTo get full content: --include \"{}\" --truncate 0\n{}\n",
+            "\n\n{}\nTRUNCATED at line {}/{} ({}% reduction)\nTo get full content: --include \"{}\" --truncate 0\n/* ZOOM_AFFORDANCE: pm_encoder --zoom file={} */\n{}\n",
             "=".repeat(70),
             max_lines,
             total_lines,
             reduced_pct,
+            file_path,
             file_path,
             "=".repeat(70)
         );
@@ -1161,7 +1169,8 @@ fn truncate_with_gap_markers(
         }
 
         marker.push_str(&format!(
-            "\nTo get full content: --include \"{}\" --truncate 0\n{}\n",
+            "\nTo get full content: --include \"{}\" --truncate 0\n/* ZOOM_AFFORDANCE: pm_encoder --zoom file={} */\n{}\n",
+            file_path,
             file_path,
             "=".repeat(70)
         ));
@@ -1237,7 +1246,8 @@ fn truncate_markdown(
 
         // Empty line before "To get full content" (matches Python's marker format)
         marker.push_str(&format!(
-            "\n\nTo get full content: --include \"{}\" --truncate 0\n{}\n",
+            "\n\nTo get full content: --include \"{}\" --truncate 0\n/* ZOOM_AFFORDANCE: pm_encoder --zoom file={} */\n{}\n",
+            file_path,
             file_path,
             "=".repeat(70)
         ));
