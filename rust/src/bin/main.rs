@@ -564,10 +564,10 @@ fn main() {
     // ═══════════════════════════════════════════════════════════════════════════
 
     if let Some(session_cmd) = &cli.zoom_session {
-        use pm_encoder::core::{ZoomSessionStore, ZoomSession};
+        use pm_encoder::core::ZoomSessionStore;
 
-        // Session store path (in project root)
-        let session_store_path = project_root.join(".pm_encoder_sessions.json");
+        // Session store path (project-local)
+        let session_store_path = ZoomSessionStore::default_path(&project_root);
 
         // Parse action:name format
         let parts: Vec<&str> = session_cmd.splitn(2, ':').collect();
@@ -577,21 +577,121 @@ fn main() {
         match action {
             "create" => {
                 let name = name.unwrap_or("default");
-                let session = ZoomSession::new(name);
-                eprintln!("Created zoom session: {}", name);
-                eprintln!("Use --zoom to add targets, --zoom-session show to view");
-                // In a full implementation, we'd persist this
+                match ZoomSessionStore::with_persistence(&session_store_path, |store| {
+                    store.create_session(name);
+                    store.session_count()
+                }) {
+                    Ok(count) => {
+                        eprintln!("Created zoom session: {}", name);
+                        eprintln!("Total sessions: {}", count);
+                        eprintln!("Use --zoom to add targets, --zoom-session show to view");
+                    }
+                    Err(e) => {
+                        eprintln!("Error creating session: {}", e);
+                        std::process::exit(1);
+                    }
+                }
+                return;
+            }
+            "load" => {
+                let name = name.unwrap_or("default");
+                match ZoomSessionStore::with_persistence(&session_store_path, |store| {
+                    store.set_active(name)
+                }) {
+                    Ok(Ok(())) => {
+                        eprintln!("Loaded zoom session: {}", name);
+                    }
+                    Ok(Err(e)) => {
+                        eprintln!("Error: {}", e);
+                        std::process::exit(1);
+                    }
+                    Err(e) => {
+                        eprintln!("Error loading sessions: {}", e);
+                        std::process::exit(1);
+                    }
+                }
                 return;
             }
             "list" => {
-                eprintln!("Zoom Sessions:");
-                eprintln!("  (Session persistence coming in v1.1.1)");
-                eprintln!("  Use --zoom-session create:<name> to create a session");
+                match ZoomSessionStore::load(&session_store_path) {
+                    Ok(store) => {
+                        let sessions = store.list_sessions_with_meta();
+                        if sessions.is_empty() {
+                            eprintln!("No zoom sessions found.");
+                            eprintln!("Use --zoom-session create:<name> to create one");
+                        } else {
+                            eprintln!("Zoom Sessions:");
+                            for (name, is_active, last_accessed) in sessions {
+                                let marker = if is_active { " *" } else { "" };
+                                eprintln!("  {}{} (last: {})", name, marker, &last_accessed[..10]);
+                            }
+                        }
+                    }
+                    Err(e) => {
+                        eprintln!("Error loading sessions: {}", e);
+                        std::process::exit(1);
+                    }
+                }
                 return;
             }
             "show" => {
-                eprintln!("Active Session: (none)");
-                eprintln!("  Use --zoom-session create:<name> to start");
+                match ZoomSessionStore::load(&session_store_path) {
+                    Ok(store) => {
+                        if let Some(session) = store.active() {
+                            eprintln!("Active Session: {}", session.name);
+                            if let Some(desc) = &session.description {
+                                eprintln!("  Description: {}", desc);
+                            }
+                            eprintln!("  Created: {}", &session.created_at[..10]);
+                            eprintln!("  Active zooms: {}", session.zoom_count());
+                            for (target, depth) in &session.active_zooms {
+                                eprintln!("    - {} ({:?})", target, depth);
+                            }
+                            if session.history.can_undo() {
+                                eprintln!("  History: {} entries (undo available)", session.history.entries().len());
+                            }
+                        } else {
+                            eprintln!("No active session.");
+                            let names = store.list_sessions();
+                            if !names.is_empty() {
+                                eprintln!("Available: {:?}", names);
+                                eprintln!("Use --zoom-session load:<name> to activate");
+                            } else {
+                                eprintln!("Use --zoom-session create:<name> to start");
+                            }
+                        }
+                    }
+                    Err(e) => {
+                        eprintln!("Error loading sessions: {}", e);
+                        std::process::exit(1);
+                    }
+                }
+                return;
+            }
+            "delete" => {
+                let name = match name {
+                    Some(n) => n,
+                    None => {
+                        eprintln!("Error: delete requires session name");
+                        eprintln!("Usage: --zoom-session delete:<name>");
+                        std::process::exit(1);
+                    }
+                };
+                match ZoomSessionStore::with_persistence(&session_store_path, |store| {
+                    store.delete_session(name)
+                }) {
+                    Ok(Ok(())) => {
+                        eprintln!("Deleted session: {}", name);
+                    }
+                    Ok(Err(e)) => {
+                        eprintln!("Error: {}", e);
+                        std::process::exit(1);
+                    }
+                    Err(e) => {
+                        eprintln!("Error: {}", e);
+                        std::process::exit(1);
+                    }
+                }
                 return;
             }
             _ => {
@@ -604,26 +704,81 @@ fn main() {
 
     // Zoom undo/redo (Fractal v2)
     if cli.zoom_undo {
-        eprintln!("Zoom undo: No active session");
-        eprintln!("Use --zoom-session create:<name> to start a session");
+        use pm_encoder::core::ZoomSessionStore;
+        let session_store_path = ZoomSessionStore::default_path(&project_root);
+
+        match ZoomSessionStore::with_persistence(&session_store_path, |store| {
+            if let Some(session) = store.active_mut() {
+                if let Some(entry) = session.history.undo() {
+                    eprintln!("Undo: {:?} {} on {}", entry.direction,
+                        if matches!(entry.direction, pm_encoder::core::ZoomDirection::Expand) { "expand" } else { "collapse" },
+                        entry.target);
+                    true
+                } else {
+                    eprintln!("Nothing to undo");
+                    false
+                }
+            } else {
+                eprintln!("No active session");
+                eprintln!("Use --zoom-session create:<name> to start a session");
+                false
+            }
+        }) {
+            Ok(_) => {}
+            Err(e) => eprintln!("Error: {}", e),
+        }
         return;
     }
 
     if cli.zoom_redo {
-        eprintln!("Zoom redo: No active session");
-        eprintln!("Use --zoom-session create:<name> to start a session");
+        use pm_encoder::core::ZoomSessionStore;
+        let session_store_path = ZoomSessionStore::default_path(&project_root);
+
+        match ZoomSessionStore::with_persistence(&session_store_path, |store| {
+            if let Some(session) = store.active_mut() {
+                if let Some(entry) = session.history.redo() {
+                    eprintln!("Redo: {:?} on {}", entry.direction, entry.target);
+                    true
+                } else {
+                    eprintln!("Nothing to redo");
+                    false
+                }
+            } else {
+                eprintln!("No active session");
+                eprintln!("Use --zoom-session create:<name> to start a session");
+                false
+            }
+        }) {
+            Ok(_) => {}
+            Err(e) => eprintln!("Error: {}", e),
+        }
         return;
     }
 
     // Zoom collapse (bidirectional zoom)
     if let Some(collapse_str) = &cli.zoom_collapse {
-        use pm_encoder::core::ZoomTarget;
+        use pm_encoder::core::{ZoomTarget, ZoomSessionStore};
+        let session_store_path = ZoomSessionStore::default_path(&project_root);
 
         match ZoomTarget::parse(collapse_str) {
             Ok(target) => {
-                eprintln!("Collapse target: {}", target);
-                eprintln!("(Full collapse implementation in v1.1.1)");
-                // In full implementation: load session, call remove_zoom, regenerate
+                match ZoomSessionStore::with_persistence(&session_store_path, |store| {
+                    if let Some(session) = store.active_mut() {
+                        if session.remove_zoom(&target) {
+                            eprintln!("Collapsed: {}", target);
+                            true
+                        } else {
+                            eprintln!("Target not currently zoomed: {}", target);
+                            false
+                        }
+                    } else {
+                        eprintln!("No active session");
+                        false
+                    }
+                }) {
+                    Ok(_) => {}
+                    Err(e) => eprintln!("Error: {}", e),
+                }
                 return;
             }
             Err(e) => {

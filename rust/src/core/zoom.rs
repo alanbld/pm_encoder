@@ -13,10 +13,13 @@
 //! The LLM can then request expansion via MCP or CLI.
 
 use crate::core::error::{EncoderError, Result};
+use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
 use std::fmt;
+use std::path::{Path, PathBuf};
 
 /// Target type for zoom operations
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum ZoomTarget {
     /// Zoom into a specific function
     Function(String),
@@ -121,7 +124,7 @@ impl fmt::Display for ZoomTarget {
 }
 
 /// Configuration for a zoom operation
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ZoomConfig {
     /// The target to zoom into
     pub target: ZoomTarget,
@@ -136,7 +139,7 @@ pub struct ZoomConfig {
 }
 
 /// Depth of zoom expansion
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
 pub enum ZoomDepth {
     /// Only show signatures/declarations
     Signature,
@@ -244,7 +247,7 @@ impl ZoomAction {
 // ============================================================================
 
 /// Direction of zoom operation
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum ZoomDirection {
     /// Expand to show more detail
     Expand,
@@ -253,7 +256,7 @@ pub enum ZoomDirection {
 }
 
 /// A zoom history entry for undo/redo
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ZoomHistoryEntry {
     /// The zoom target
     pub target: ZoomTarget,
@@ -265,25 +268,36 @@ pub struct ZoomHistoryEntry {
     pub timestamp: u64,
 }
 
+fn default_max_history() -> usize { 50 }
+
 /// Zoom history for tracking and undoing actions
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ZoomHistory {
     /// Stack of zoom actions (most recent last)
+    #[serde(default)]
     entries: Vec<ZoomHistoryEntry>,
     /// Current position in history (for redo)
+    #[serde(default)]
     position: usize,
     /// Maximum history size
+    #[serde(default = "default_max_history")]
     max_size: usize,
+}
+
+impl Default for ZoomHistory {
+    fn default() -> Self {
+        Self {
+            entries: Vec::new(),
+            position: 0,
+            max_size: default_max_history(),
+        }
+    }
 }
 
 impl ZoomHistory {
     /// Create a new zoom history with default max size
     pub fn new() -> Self {
-        Self {
-            entries: Vec::new(),
-            position: 0,
-            max_size: 100,
-        }
+        Self::default()
     }
 
     /// Create with custom max size
@@ -359,36 +373,60 @@ impl ZoomHistory {
     }
 }
 
-/// A saved zoom session
-#[derive(Debug, Clone)]
+fn default_timestamp() -> String {
+    chrono::Utc::now().to_rfc3339()
+}
+
+/// A saved zoom session with enhanced metadata
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ZoomSession {
     /// Session name
     pub name: String,
+
+    // Enhanced metadata (v1.1.0)
+    /// Creation timestamp (ISO 8601)
+    #[serde(default = "default_timestamp")]
+    pub created_at: String,
+    /// Last accessed timestamp (ISO 8601)
+    #[serde(default = "default_timestamp")]
+    pub last_accessed: String,
+    /// Optional description
+    #[serde(default)]
+    pub description: Option<String>,
+    /// Custom metadata key-value pairs
+    #[serde(default)]
+    pub metadata: HashMap<String, String>,
+
+    // Core session data
     /// Active zoom targets with their depths
+    #[serde(default)]
     pub active_zooms: Vec<(ZoomTarget, ZoomDepth)>,
     /// Zoom history
+    #[serde(default)]
     pub history: ZoomHistory,
-    /// Creation timestamp
-    pub created_at: u64,
-    /// Last modified timestamp
-    pub modified_at: u64,
 }
 
 impl ZoomSession {
     /// Create a new empty session
     pub fn new(name: &str) -> Self {
-        let now = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap_or_default()
-            .as_secs();
+        let now = default_timestamp();
 
         Self {
             name: name.to_string(),
+            created_at: now.clone(),
+            last_accessed: now,
+            description: None,
+            metadata: HashMap::new(),
             active_zooms: Vec::new(),
             history: ZoomHistory::new(),
-            created_at: now,
-            modified_at: now,
         }
+    }
+
+    /// Create a new session with description
+    pub fn with_description(name: &str, description: &str) -> Self {
+        let mut session = Self::new(name);
+        session.description = Some(description.to_string());
+        session
     }
 
     /// Add a zoom to the session
@@ -437,12 +475,9 @@ impl ZoomSession {
         }
     }
 
-    /// Update modified timestamp
-    fn touch(&mut self) {
-        self.modified_at = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap_or_default()
-            .as_secs();
+    /// Update last_accessed timestamp
+    pub fn touch(&mut self) {
+        self.last_accessed = default_timestamp();
     }
 
     /// Check if a target is zoomed
@@ -463,25 +498,119 @@ impl ZoomSession {
     }
 }
 
-/// Session store for managing multiple sessions
-#[derive(Debug, Default)]
+fn default_version() -> String { "1.0".to_string() }
+
+/// Session store for managing multiple sessions with persistence
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ZoomSessionStore {
-    sessions: std::collections::HashMap<String, ZoomSession>,
-    active_session: Option<String>,
+    /// Schema version for future migrations
+    #[serde(default = "default_version")]
+    pub version: String,
+
+    /// All sessions by name
+    #[serde(default)]
+    pub sessions: HashMap<String, ZoomSession>,
+
+    /// Currently active session name
+    #[serde(default)]
+    pub active_session: Option<String>,
+
+    /// Runtime-only: path to store file (not persisted)
+    #[serde(skip)]
+    store_path: Option<PathBuf>,
+
+    /// Runtime-only: auto-save flag (not persisted)
+    #[serde(skip)]
+    auto_save: bool,
+}
+
+impl Default for ZoomSessionStore {
+    fn default() -> Self {
+        Self {
+            version: default_version(),
+            sessions: HashMap::new(),
+            active_session: None,
+            store_path: None,
+            auto_save: false,
+        }
+    }
 }
 
 impl ZoomSessionStore {
     /// Create a new session store
     pub fn new() -> Self {
-        Self {
-            sessions: std::collections::HashMap::new(),
-            active_session: None,
+        Self::default()
+    }
+
+    /// Default session file location (project-local)
+    pub fn default_path(project_root: &Path) -> PathBuf {
+        project_root.join(".pm_encoder").join("sessions.json")
+    }
+
+    /// Load sessions from JSON file, or create empty store
+    pub fn load(path: &Path) -> std::result::Result<Self, String> {
+        if !path.exists() {
+            let mut store = Self::default();
+            store.store_path = Some(path.to_path_buf());
+            return Ok(store);
         }
+
+        let content = std::fs::read_to_string(path)
+            .map_err(|e| format!("Failed to read sessions: {}", e))?;
+
+        let mut store: Self = serde_json::from_str(&content)
+            .map_err(|e| format!("Failed to parse sessions: {}", e))?;
+
+        store.store_path = Some(path.to_path_buf());
+        Ok(store)
+    }
+
+    /// Save sessions to JSON file
+    pub fn save(&self) -> std::result::Result<(), String> {
+        let path = self.store_path.as_ref()
+            .ok_or_else(|| "No store path configured".to_string())?;
+
+        // Ensure directory exists
+        if let Some(parent) = path.parent() {
+            std::fs::create_dir_all(parent)
+                .map_err(|e| format!("Failed to create directory: {}", e))?;
+        }
+
+        let content = serde_json::to_string_pretty(self)
+            .map_err(|e| format!("Failed to serialize: {}", e))?;
+
+        std::fs::write(path, content)
+            .map_err(|e| format!("Failed to write: {}", e))
+    }
+
+    /// Enable auto-save on Drop
+    pub fn with_auto_save(mut self) -> Self {
+        self.auto_save = true;
+        self
+    }
+
+    /// Atomic load-modify-save operation
+    pub fn with_persistence<F, R>(path: &Path, f: F) -> std::result::Result<R, String>
+    where
+        F: FnOnce(&mut Self) -> R,
+    {
+        let mut store = Self::load(path)?;
+        let result = f(&mut store);
+        store.save()?;
+        Ok(result)
     }
 
     /// Create a new session
     pub fn create_session(&mut self, name: &str) -> &mut ZoomSession {
         let session = ZoomSession::new(name);
+        self.sessions.insert(name.to_string(), session);
+        self.active_session = Some(name.to_string());
+        self.sessions.get_mut(name).unwrap()
+    }
+
+    /// Create session with description
+    pub fn create_session_with_desc(&mut self, name: &str, description: &str) -> &mut ZoomSession {
+        let session = ZoomSession::with_description(name, description);
         self.sessions.insert(name.to_string(), session);
         self.active_session = Some(name.to_string());
         self.sessions.get_mut(name).unwrap()
@@ -511,36 +640,65 @@ impl ZoomSessionStore {
         }
     }
 
-    /// Set active session
-    pub fn set_active(&mut self, name: &str) -> bool {
-        if self.sessions.contains_key(name) {
-            self.active_session = Some(name.to_string());
-            true
-        } else {
-            false
+    /// Set active session (with touch)
+    pub fn set_active(&mut self, name: &str) -> std::result::Result<(), String> {
+        if !self.sessions.contains_key(name) {
+            return Err(format!("Session '{}' not found", name));
         }
+
+        // Update last_accessed
+        if let Some(session) = self.sessions.get_mut(name) {
+            session.touch();
+        }
+
+        self.active_session = Some(name.to_string());
+        Ok(())
     }
 
-    /// List all session names
+    /// List all sessions with metadata: (name, is_active, last_accessed)
+    pub fn list_sessions_with_meta(&self) -> Vec<(&str, bool, &str)> {
+        self.sessions.iter()
+            .map(|(name, session)| {
+                let is_active = self.active_session.as_ref() == Some(name);
+                (name.as_str(), is_active, session.last_accessed.as_str())
+            })
+            .collect()
+    }
+
+    /// List all session names (legacy)
     pub fn list_sessions(&self) -> Vec<&str> {
         self.sessions.keys().map(|s| s.as_str()).collect()
     }
 
     /// Delete a session
-    pub fn delete_session(&mut self, name: &str) -> bool {
-        if self.sessions.remove(name).is_some() {
-            if self.active_session.as_deref() == Some(name) {
-                self.active_session = None;
-            }
-            true
-        } else {
-            false
+    pub fn delete_session(&mut self, name: &str) -> std::result::Result<(), String> {
+        if !self.sessions.contains_key(name) {
+            return Err(format!("Session '{}' not found", name));
         }
+
+        self.sessions.remove(name);
+
+        // Clear active if deleted
+        if self.active_session.as_deref() == Some(name) {
+            self.active_session = None;
+        }
+
+        Ok(())
     }
 
     /// Get session count
     pub fn session_count(&self) -> usize {
         self.sessions.len()
+    }
+}
+
+impl Drop for ZoomSessionStore {
+    fn drop(&mut self) {
+        if self.auto_save && self.store_path.is_some() {
+            if let Err(e) = self.save() {
+                eprintln!("[WARN] Failed to auto-save sessions: {}", e);
+            }
+        }
     }
 }
 
@@ -650,7 +808,9 @@ mod tests {
         let session = ZoomSession::new("test-session");
         assert_eq!(session.name, "test-session");
         assert_eq!(session.zoom_count(), 0);
-        assert!(session.created_at > 0);
+        // created_at is now ISO 8601 timestamp string
+        assert!(!session.created_at.is_empty());
+        assert!(session.created_at.contains("T")); // ISO 8601 format contains 'T'
     }
 
     #[test]
@@ -728,7 +888,7 @@ mod tests {
         // Creating a session makes it active
         assert_eq!(store.active().unwrap().name, "s2");
 
-        store.set_active("s1");
+        store.set_active("s1").expect("set_active should succeed");
         assert_eq!(store.active().unwrap().name, "s1");
     }
 
@@ -754,8 +914,8 @@ mod tests {
         store.create_session("to-delete");
         assert_eq!(store.session_count(), 1);
 
-        let deleted = store.delete_session("to-delete");
-        assert!(deleted);
+        let result = store.delete_session("to-delete");
+        assert!(result.is_ok());
         assert_eq!(store.session_count(), 0);
         assert!(store.active().is_none());
     }
@@ -834,5 +994,161 @@ mod tests {
         assert_eq!(ZoomDepth::from_str("signature"), Some(ZoomDepth::Signature));
         assert_eq!(ZoomDepth::from_str("full"), Some(ZoomDepth::Full));
         assert_eq!(ZoomDepth::from_str("invalid"), None);
+    }
+
+    // ========================================================================
+    // Persistence Tests
+    // ========================================================================
+
+    #[test]
+    fn test_persistence_save_load_roundtrip() {
+        let temp_dir = std::env::temp_dir().join("pm_zoom_test_roundtrip");
+        let _ = std::fs::remove_dir_all(&temp_dir);
+        std::fs::create_dir_all(&temp_dir).unwrap();
+        let path = temp_dir.join("sessions.json");
+
+        // Create store with sessions
+        {
+            let mut store = ZoomSessionStore::load(&path).unwrap();
+            store.create_session_with_desc("investigation", "Bug hunt");
+            store.active_mut().unwrap().add_zoom(
+                ZoomTarget::Function("process".to_string()),
+                ZoomDepth::Full,
+            );
+            store.save().unwrap();
+        }
+
+        // Load and verify
+        {
+            let store = ZoomSessionStore::load(&path).unwrap();
+            assert_eq!(store.session_count(), 1);
+            let session = store.get_session("investigation").unwrap();
+            assert_eq!(session.description.as_deref(), Some("Bug hunt"));
+            assert_eq!(session.zoom_count(), 1);
+        }
+
+        let _ = std::fs::remove_dir_all(&temp_dir);
+    }
+
+    #[test]
+    fn test_persistence_creates_directory() {
+        let temp_dir = std::env::temp_dir().join("pm_zoom_test_mkdir");
+        let _ = std::fs::remove_dir_all(&temp_dir);
+        let path = temp_dir.join("nested").join("deep").join("sessions.json");
+
+        let mut store = ZoomSessionStore::load(&path).unwrap();
+        store.create_session("test");
+        store.save().unwrap();
+
+        assert!(path.exists());
+        let _ = std::fs::remove_dir_all(&temp_dir);
+    }
+
+    #[test]
+    fn test_persistence_auto_save_on_drop() {
+        let temp_dir = std::env::temp_dir().join("pm_zoom_test_autosave");
+        let _ = std::fs::remove_dir_all(&temp_dir);
+        std::fs::create_dir_all(&temp_dir).unwrap();
+        let path = temp_dir.join("sessions.json");
+
+        // Create store with auto_save and drop it
+        {
+            let mut store = ZoomSessionStore::load(&path).unwrap().with_auto_save();
+            store.create_session("auto-saved");
+            // Drop triggers save
+        }
+
+        // Verify saved
+        let store = ZoomSessionStore::load(&path).unwrap();
+        assert!(store.get_session("auto-saved").is_some());
+
+        let _ = std::fs::remove_dir_all(&temp_dir);
+    }
+
+    #[test]
+    fn test_persistence_with_persistence_pattern() {
+        let temp_dir = std::env::temp_dir().join("pm_zoom_test_atomic");
+        let _ = std::fs::remove_dir_all(&temp_dir);
+        std::fs::create_dir_all(&temp_dir).unwrap();
+        let path = temp_dir.join("sessions.json");
+
+        // Atomic create
+        let name = ZoomSessionStore::with_persistence(&path, |store| {
+            store.create_session("atomic");
+            store.active().unwrap().name.clone()
+        }).unwrap();
+
+        assert_eq!(name, "atomic");
+
+        // Verify persisted
+        let store = ZoomSessionStore::load(&path).unwrap();
+        assert!(store.get_session("atomic").is_some());
+
+        let _ = std::fs::remove_dir_all(&temp_dir);
+    }
+
+    #[test]
+    fn test_persistence_version_field() {
+        let temp_dir = std::env::temp_dir().join("pm_zoom_test_version");
+        let _ = std::fs::remove_dir_all(&temp_dir);
+        std::fs::create_dir_all(&temp_dir).unwrap();
+        let path = temp_dir.join("sessions.json");
+
+        // Create and save
+        let mut store = ZoomSessionStore::load(&path).unwrap();
+        store.create_session("test");
+        store.save().unwrap();
+
+        // Read JSON and verify version field
+        let content = std::fs::read_to_string(&path).unwrap();
+        assert!(content.contains("\"version\""));
+        assert!(content.contains("\"1.0\""));
+
+        let _ = std::fs::remove_dir_all(&temp_dir);
+    }
+
+    #[test]
+    fn test_persistence_corrupted_json_handling() {
+        let temp_dir = std::env::temp_dir().join("pm_zoom_test_corrupt");
+        let _ = std::fs::remove_dir_all(&temp_dir);
+        std::fs::create_dir_all(&temp_dir).unwrap();
+        let path = temp_dir.join("sessions.json");
+
+        // Write invalid JSON
+        std::fs::write(&path, "{ invalid json }").unwrap();
+
+        // Load should return error
+        let result = ZoomSessionStore::load(&path);
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("Failed to parse"));
+
+        let _ = std::fs::remove_dir_all(&temp_dir);
+    }
+
+    #[test]
+    fn test_persistence_session_metadata() {
+        let temp_dir = std::env::temp_dir().join("pm_zoom_test_meta");
+        let _ = std::fs::remove_dir_all(&temp_dir);
+        std::fs::create_dir_all(&temp_dir).unwrap();
+        let path = temp_dir.join("sessions.json");
+
+        // Create session with custom metadata
+        {
+            let mut store = ZoomSessionStore::load(&path).unwrap();
+            let session = store.create_session_with_desc("meta-test", "Testing metadata");
+            session.metadata.insert("project".to_string(), "pm_encoder".to_string());
+            session.metadata.insert("branch".to_string(), "main".to_string());
+            store.save().unwrap();
+        }
+
+        // Load and verify metadata preserved
+        {
+            let store = ZoomSessionStore::load(&path).unwrap();
+            let session = store.get_session("meta-test").unwrap();
+            assert_eq!(session.metadata.get("project"), Some(&"pm_encoder".to_string()));
+            assert_eq!(session.metadata.get("branch"), Some(&"main".to_string()));
+        }
+
+        let _ = std::fs::remove_dir_all(&temp_dir);
     }
 }
