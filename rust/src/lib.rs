@@ -590,7 +590,7 @@ impl ContextEngine {
 }
 
 /// Version of the pm_encoder library
-pub const VERSION: &str = "0.9.0";
+pub const VERSION: &str = "1.0.0";
 
 /// Returns the version of the pm_encoder library
 pub fn version() -> &'static str {
