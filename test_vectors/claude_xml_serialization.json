@@ -1,0 +1,103 @@
+{
+  "name": "claude_xml_serialization",
+  "description": "Claude-XML format serialization with CDATA escaping and metadata",
+  "version": "2.0.0",
+  "category": "format",
+  "input": {
+    "files": {
+      "src/main.py": "class Runner:\n    \"\"\"Main runner class.\"\"\"\n    \n    def run(self):\n        return True\n",
+      "src/lib.rs": "pub fn process() -> bool {\n    let arr = vec![1, 2, 3];\n    arr[arr.len() - 1]]> == 3  // Contains ]]> sequence\n}\n"
+    },
+    "format": "claude-xml",
+    "lens": "architecture",
+    "frozen": true,
+    "token_budget": null
+  },
+  "expected": {
+    "format": "claude-xml",
+    "structure_checks": [
+      {
+        "name": "has_context_root",
+        "xpath": "/context",
+        "description": "Output must have <context> as root element"
+      },
+      {
+        "name": "has_metadata",
+        "xpath": "/context/metadata",
+        "description": "Output must have <metadata> section"
+      },
+      {
+        "name": "has_files_container",
+        "xpath": "/context/files",
+        "description": "Output must have <files> container"
+      },
+      {
+        "name": "file_has_path_attr",
+        "xpath": "/context/files/file/@path",
+        "description": "Each file element must have path attribute"
+      },
+      {
+        "name": "file_has_priority_attr",
+        "xpath": "/context/files/file/@priority",
+        "description": "Each file element must have priority attribute"
+      },
+      {
+        "name": "file_has_checksum_attr",
+        "xpath": "/context/files/file/@checksum",
+        "description": "Each file element must have checksum attribute"
+      },
+      {
+        "name": "file_has_language_attr",
+        "xpath": "/context/files/file/@language",
+        "description": "Each file element must have language attribute"
+      }
+    ],
+    "content_checks": [
+      {
+        "name": "cdata_wrapped",
+        "pattern": "<!\\[CDATA\\[",
+        "description": "Code content must be wrapped in CDATA sections"
+      },
+      {
+        "name": "cdata_escaped",
+        "pattern": "\\]\\]\\]\\]><\\!\\[CDATA\\[>",
+        "description": "The ]]> sequence must be escaped by splitting CDATA"
+      },
+      {
+        "name": "valid_xml",
+        "description": "Output must be valid XML (no unescaped special chars)"
+      }
+    ],
+    "file_expectations": [
+      {
+        "path": "src/main.py",
+        "priority": 100,
+        "language": "python",
+        "contains": ["class Runner:", "def run(self):"]
+      },
+      {
+        "path": "src/lib.rs",
+        "priority": 95,
+        "language": "rust",
+        "contains": ["pub fn process()", "]]]]><![CDATA[>"]
+      }
+    ],
+    "metadata_checks": [
+      {
+        "field": "frozen",
+        "value": "true",
+        "description": "Frozen flag should be reflected in metadata"
+      },
+      {
+        "field": "lens",
+        "value": "architecture",
+        "description": "Active lens should be in metadata"
+      }
+    ]
+  },
+  "metadata": {
+    "created_by": "manual",
+    "python_version": "2.0.0",
+    "purpose": "Validate Claude-XML format with CDATA escaping"
+  }
+}

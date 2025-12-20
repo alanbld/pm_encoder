@@ -10,31 +10,32 @@
       "tests/test_core.py": "def test_core():\n    assert True\n",
       "docs/readme.md": "# Documentation\n"
     },
-    "budget": 200,
+    "budget": 500,
     "strategy": "drop",
     "lens": "architecture"
   },
   "expected": {
     "strategy": "drop",
-    "budget": 200,
+    "budget": 500,
     "priorities": {
-      "src/core.py": 50,
-      "src/utils.py": 50,
-      "tests/test_core.py": 50,
+      "src/core.py": 100,
+      "src/utils.py": 100,
+      "tests/test_core.py": 100,
       "docs/readme.md": 50
     },
     "files_selected": [
-      "docs/readme.md",
       "src/core.py",
       "src/utils.py",
-      "tests/test_core.py"
+      "tests/test_core.py",
+      "docs/readme.md"
     ],
     "files_dropped": [],
     "selected_count": 4,
     "dropped_count": 0,
     "behavior": [
       "Architecture lens assigns priorities via groups",
-      "src/**/*.py gets higher priority than tests/**",
+      "*.py files get priority 100 with structure truncation",
+      "docs/readme.md gets fallback priority 50",
       "Files selected by priority order within budget"
     ]
   },

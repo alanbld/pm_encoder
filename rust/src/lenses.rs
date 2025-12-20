@@ -164,22 +164,31 @@ impl LensManager {
             fallback: Some(FallbackConfig { priority: 50 }),
         });
 
-        // Debug lens - recent changes
+        // Debug lens - recent changes with full content
         built_in.insert("debug".to_string(), LensConfig {
             description: "Recent changes for debugging".to_string(),
             truncate_mode: None,
-            truncate: Some(0),
+            truncate: Some(0), // No truncation - full content
             exclude: vec![
                 "*.pyc".to_string(), "__pycache__".to_string(), ".git".to_string(),
             ],
             include: Vec::new(),
             sort_by: Some("mtime".to_string()),
             sort_order: Some("desc".to_string()),
-            groups: Vec::new(),
-            fallback: None,
+            groups: vec![
+                // Core implementation files - highest priority
+                PriorityGroup { pattern: "*.py".to_string(), priority: 100, truncate_mode: None, truncate: None },
+                PriorityGroup { pattern: "*.rs".to_string(), priority: 100, truncate_mode: None, truncate: None },
+                PriorityGroup { pattern: "*.js".to_string(), priority: 90, truncate_mode: None, truncate: None },
+                PriorityGroup { pattern: "*.ts".to_string(), priority: 90, truncate_mode: None, truncate: None },
+                // Tests - high priority for debugging
+                PriorityGroup { pattern: "tests/**".to_string(), priority: 85, truncate_mode: None, truncate: None },
+                PriorityGroup { pattern: "test/**".to_string(), priority: 85, truncate_mode: None, truncate: None },
+            ],
+            fallback: Some(FallbackConfig { priority: 50 }),
         });
 
-        // Security lens
+        // Security lens - focuses on auth, secrets, and dependencies
         built_in.insert("security".to_string(), LensConfig {
             description: "Security-relevant files (auth, secrets, dependencies)".to_string(),
             truncate_mode: None,
@@ -195,8 +204,23 @@ impl LensManager {
             ],
             sort_by: Some("name".to_string()),
             sort_order: None,
-            groups: Vec::new(),
-            fallback: None,
+            groups: vec![
+                // Auth and secrets - highest priority
+                PriorityGroup { pattern: "*auth*".to_string(), priority: 100, truncate_mode: None, truncate: None },
+                PriorityGroup { pattern: "*secret*".to_string(), priority: 100, truncate_mode: None, truncate: None },
+                PriorityGroup { pattern: "*credential*".to_string(), priority: 100, truncate_mode: None, truncate: None },
+                PriorityGroup { pattern: "*security*".to_string(), priority: 95, truncate_mode: None, truncate: None },
+                // Dependency files - high priority for vulnerability analysis
+                PriorityGroup { pattern: "package.json".to_string(), priority: 90, truncate_mode: None, truncate: None },
+                PriorityGroup { pattern: "package-lock.json".to_string(), priority: 85, truncate_mode: None, truncate: None },
+                PriorityGroup { pattern: "requirements.txt".to_string(), priority: 90, truncate_mode: None, truncate: None },
+                PriorityGroup { pattern: "Cargo.toml".to_string(), priority: 90, truncate_mode: None, truncate: None },
+                PriorityGroup { pattern: "Cargo.lock".to_string(), priority: 85, truncate_mode: None, truncate: None },
+                // Config files that may contain sensitive settings
+                PriorityGroup { pattern: "*.env*".to_string(), priority: 80, truncate_mode: None, truncate: None },
+                PriorityGroup { pattern: "Dockerfile".to_string(), priority: 75, truncate_mode: None, truncate: None },
+            ],
+            fallback: Some(FallbackConfig { priority: 50 }),
         });
 
         // Onboarding lens
@@ -298,6 +322,73 @@ impl LensManager {
             }
 
             eprintln!("╚════════════════════════════════════════════════════════════════╝");
+        }
+    }
+
+    /// Get the matching priority group config for a file (v1.7.0)
+    ///
+    /// Returns the highest-priority matching group, or a fallback group.
+    /// Used by token budgeting to apply per-file truncation settings.
+    pub fn get_file_group_config(&self, file_path: &Path) -> PriorityGroup {
+        let lens_config = match &self.active_lens {
+            Some(name) => self.get_lens(name),
+            None => return PriorityGroup {
+                pattern: "*".to_string(),
+                priority: 50,
+                truncate_mode: None,
+                truncate: None,
+            },
+        };
+
+        let config = match lens_config {
+            Some(c) => c,
+            None => return PriorityGroup {
+                pattern: "*".to_string(),
+                priority: 50,
+                truncate_mode: None,
+                truncate: None,
+            },
+        };
+
+        // Backward compatibility: no groups = default group
+        if config.groups.is_empty() {
+            return PriorityGroup {
+                pattern: "*".to_string(),
+                priority: 50,
+                truncate_mode: None,
+                truncate: None,
+            };
+        }
+
+        // Find ALL groups that match, return the one with HIGHEST priority
+        let mut best_match: Option<&PriorityGroup> = None;
+
+        for group in &config.groups {
+            if Self::match_pattern(file_path, &group.pattern) {
+                match best_match {
+                    None => best_match = Some(group),
+                    Some(current) if group.priority > current.priority => {
+                        best_match = Some(group);
+                    }
+                    _ => {}
+                }
+            }
+        }
+
+        // Return best match or fallback
+        match best_match {
+            Some(group) => group.clone(),
+            None => {
+                let fallback_priority = config.fallback.as_ref()
+                    .map(|f| f.priority)
+                    .unwrap_or(50);
+                PriorityGroup {
+                    pattern: "*".to_string(),
+                    priority: fallback_priority,
+                    truncate_mode: None,
+                    truncate: None,
+                }
+            }
         }
     }
 
@@ -500,8 +591,8 @@ mod tests {
     #[test]
     fn test_priority_no_groups() {
         let mut manager = LensManager::new();
-        // Apply a lens without groups (backward compatibility)
-        let _ = manager.apply_lens("debug");
+        // Apply a lens without groups (backward compatibility) - onboarding has no groups
+        let _ = manager.apply_lens("onboarding");
         assert_eq!(manager.get_file_priority(Path::new("any_file.py")), 50);
     }
 

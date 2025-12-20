@@ -144,9 +144,23 @@ struct Cli {
     // OUTPUT FORMAT (v0.10.0)
     // ═══════════════════════════════════════════════════════════════════════════
 
-    /// Output format: 'plus_minus' (default), 'xml', or 'markdown'
+    /// Output format: 'plus_minus' (default), 'xml', 'markdown', or 'claude-xml'
     #[arg(long = "format", value_enum, default_value = "plus-minus")]
     format: OutputFormatArg,
+
+    // ═══════════════════════════════════════════════════════════════════════════
+    // DETERMINISM & PRIVACY (v2.0.0)
+    // ═══════════════════════════════════════════════════════════════════════════
+
+    /// Frozen mode: bypass context store for deterministic output.
+    /// Enables byte-identical output for CI/CD pipelines and reproducible tests.
+    #[arg(long = "frozen")]
+    frozen: bool,
+
+    /// Allow sensitive metadata in output (session notes, absolute paths).
+    /// Default behavior excludes PII for privacy protection.
+    #[arg(long = "allow-sensitive")]
+    allow_sensitive: bool,
 }
 
 #[derive(Debug, Clone, Copy, ValueEnum)]
@@ -156,6 +170,9 @@ enum OutputFormatArg {
     Xml,
     #[value(alias = "md")]
     Markdown,
+    /// Claude-optimized XML with CDATA sections and semantic attributes
+    #[value(name = "claude-xml")]
+    ClaudeXml,
 }
 
 #[derive(Debug, Clone, Copy, ValueEnum)]
@@ -257,12 +274,29 @@ fn main() {
 
     config.stream = cli.stream;
 
+    // Apply truncation settings
+    config.truncate_lines = cli.truncate;
+    config.truncate_mode = match cli.truncate_mode {
+        TruncateMode::Simple => "simple".to_string(),
+        TruncateMode::Smart => "smart".to_string(),
+        TruncateMode::Structure => "structure".to_string(),
+    };
+    config.truncate_summary = cli.truncate_summary && !cli.no_truncate_summary;
+    config.truncate_exclude = cli.truncate_exclude.clone();
+    config.truncate_stats = cli.truncate_stats;
+
     // Apply output format
     config.output_format = match cli.format {
         OutputFormatArg::PlusMinus => OutputFormat::PlusMinus,
         OutputFormatArg::Xml => OutputFormat::Xml,
         OutputFormatArg::Markdown => OutputFormat::Markdown,
+        OutputFormatArg::ClaudeXml => OutputFormat::ClaudeXml,
     };
+
+    // Apply determinism and privacy settings (v2.0.0)
+    config.frozen = cli.frozen;
+    config.allow_sensitive = cli.allow_sensitive;
+    config.active_lens = cli.lens.clone();
 
     // Streaming mode warning for file output
     if cli.stream && cli.output.is_some() {
@@ -304,6 +338,9 @@ fn main() {
             }
         };
 
+        // Store token budget in config for metadata injection (v2.0.0)
+        config.token_budget = Some(budget);
+
         // Budgeting requires batch mode
         if cli.stream {
             eprintln!("Warning: --token-budget requires batch mode, ignoring --stream");
@@ -314,6 +351,9 @@ fn main() {
 
         // Apply CLI lens if present (for priority groups)
         if let Some(lens_name) = &cli.lens {
+            // Store active lens for metadata injection (v2.0.0)
+            config.active_lens = Some(lens_name.clone());
+
             match lens_manager.apply_lens(lens_name) {
                 Ok(applied) => {
                     // Merge lens patterns into config
@@ -361,18 +401,41 @@ fn main() {
         // Print budget report to stderr
         report.print_report();
 
-        // Serialize selected files
-        let mut output = String::new();
-        for (path, content) in selected {
-            let md5 = pm_encoder::calculate_md5(&content);
-            let entry = pm_encoder::FileEntry {
+        // Build file entries for serialization
+        let entries: Vec<pm_encoder::FileEntry> = selected
+            .iter()
+            .map(|(path, content)| pm_encoder::FileEntry {
                 path: path.clone(),
-                content,
-                md5,
+                content: content.clone(),
+                md5: pm_encoder::calculate_md5(content),
                 mtime: 0,
                 ctime: 0,
-            };
-            output.push_str(&pm_encoder::serialize_file(&entry));
+            })
+            .collect();
+
+        // Serialize selected files with configured format and truncation
+        let mut output = String::new();
+
+        // Add Claude-XML header with metadata if using that format
+        if config.output_format == OutputFormat::ClaudeXml {
+            output.push_str(&pm_encoder::generate_claude_xml_header(&config, &entries));
+        }
+
+        for entry in &entries {
+            // Use serialize_file_with_format to apply config truncation and output format
+            // Note: files may already be truncated by apply_token_budget, so we pass 0 for truncate_lines
+            // to avoid double-truncation, unless config explicitly requests additional truncation
+            output.push_str(&pm_encoder::serialize_file_with_format(
+                entry,
+                config.truncate_lines,
+                &config.truncate_mode,
+                config.output_format,
+            ));
+        }
+
+        // Add Claude-XML footer if using that format
+        if config.output_format == OutputFormat::ClaudeXml {
+            output.push_str("  </files>\n</context>\n");
         }
 
         // Write output

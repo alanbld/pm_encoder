@@ -75,6 +75,8 @@ pub enum OutputFormat {
     Xml,
     /// Markdown format - human-readable with code blocks
     Markdown,
+    /// Claude-optimized XML with semantic headers and attention hints
+    ClaudeXml,
 }
 
 impl OutputFormat {
@@ -84,7 +86,8 @@ impl OutputFormat {
             "plus_minus" | "plusminus" | "pm" | "" => Ok(Self::PlusMinus),
             "xml" => Ok(Self::Xml),
             "markdown" | "md" => Ok(Self::Markdown),
-            _ => Err(format!("Unknown format '{}'. Valid options: plus_minus, xml, markdown", s)),
+            "claude-xml" | "claude_xml" | "claudexml" => Ok(Self::ClaudeXml),
+            _ => Err(format!("Unknown format '{}'. Valid options: plus_minus, xml, markdown, claude-xml", s)),
         }
     }
 }
@@ -114,8 +117,16 @@ pub struct EncoderConfig {
     pub truncate_exclude: Vec<String>,
     /// Show truncation statistics report
     pub truncate_stats: bool,
-    /// Output format (plus_minus, xml, markdown)
+    /// Output format (plus_minus, xml, markdown, claude_xml)
     pub output_format: OutputFormat,
+    /// Frozen mode: bypass context store for deterministic output (v2.0.0)
+    pub frozen: bool,
+    /// Allow sensitive metadata in output (v2.0.0)
+    pub allow_sensitive: bool,
+    /// Active lens name for metadata injection (v2.0.0)
+    pub active_lens: Option<String>,
+    /// Token budget for metadata injection (v2.0.0)
+    pub token_budget: Option<usize>,
 }
 
 impl Default for EncoderConfig {
@@ -141,6 +152,10 @@ impl Default for EncoderConfig {
             truncate_exclude: vec![], // No files excluded by default
             truncate_stats: false, // Don't show stats report by default
             output_format: OutputFormat::PlusMinus, // Default to Plus/Minus format
+            frozen: false, // Default to dynamic mode with context store
+            allow_sensitive: false, // Default to privacy-safe mode
+            active_lens: None, // No lens by default
+            token_budget: None, // No budget by default
         }
     }
 }
@@ -293,6 +308,7 @@ impl ContextEngine {
             OutputFormat::PlusMinus => self.serialize_plus_minus(file),
             OutputFormat::Xml => self.serialize_xml(file),
             OutputFormat::Markdown => self.serialize_markdown(file),
+            OutputFormat::ClaudeXml => self.serialize_claude_xml(file),
         }
     }
 
@@ -401,16 +417,139 @@ impl ContextEngine {
         output
     }
 
+    /// Serialize file to Claude-optimized XML format
+    ///
+    /// Claude-optimized XML uses CDATA sections for code content to avoid escaping,
+    /// includes language hints, and provides semantic attributes for better understanding.
+    fn serialize_claude_xml(&self, file: &ProcessedFile) -> String {
+        let mut output = String::new();
+        let lang = detect_language(&file.path);
+        let priority = self.lens_manager.get_file_priority(Path::new(&file.path));
+
+        // Opening tag with semantic attributes
+        output.push_str("<file\n");
+        output.push_str(&format!("  path=\"{}\"\n", escape_xml_attr(&file.path)));
+        output.push_str(&format!("  language=\"{}\"\n", lang));
+        output.push_str(&format!("  md5=\"{}\"\n", file.md5));
+        output.push_str(&format!("  priority=\"{}\"\n", priority));
+
+        if file.was_truncated {
+            let final_lines = count_lines_python_style(&file.content);
+            output.push_str(&format!("  truncated=\"true\"\n"));
+            output.push_str(&format!("  original_lines=\"{}\"\n", file.original_lines));
+            output.push_str(&format!("  final_lines=\"{}\"", final_lines));
+        }
+
+        output.push_str(">\n");
+
+        // Use CDATA to avoid escaping code content
+        // Handle content that might contain "]]>" by splitting CDATA sections
+        let content = if file.content.contains("]]>") {
+            // Split "]]>" into "]]" + ">" across CDATA boundaries
+            file.content.replace("]]>", "]]]]><![CDATA[>")
+        } else {
+            file.content.clone()
+        };
+
+        output.push_str("<![CDATA[\n");
+        output.push_str(&content);
+        if !content.ends_with('\n') {
+            output.push('\n');
+        }
+        output.push_str("]]>\n");
+        output.push_str("</file>\n");
+
+        output
+    }
+
     /// Serialize multiple processed files (PURE - no I/O)
     ///
     /// Files are serialized in the order provided. Sorting should be done
     /// by the caller before passing to this function.
     pub fn serialize_processed_files(&self, files: &[ProcessedFile]) -> String {
         let mut output = String::new();
+
+        // For ClaudeXml format, wrap with context root and metadata
+        if self.config.output_format == OutputFormat::ClaudeXml {
+            output.push_str(&self.generate_claude_xml_header(files));
+        }
+
         for file in files {
             output.push_str(&self.serialize_processed_file(file));
         }
+
+        // Close ClaudeXml wrapper
+        if self.config.output_format == OutputFormat::ClaudeXml {
+            output.push_str("  </files>\n</context>\n");
+        }
+
         output
+    }
+
+    /// Generate Claude-XML header with metadata
+    fn generate_claude_xml_header(&self, files: &[ProcessedFile]) -> String {
+        let mut header = String::new();
+
+        // Context root with attributes
+        header.push_str("<context\n");
+        header.push_str("  package=\"pm_encoder\"\n");
+
+        if let Some(ref lens) = self.config.active_lens {
+            header.push_str(&format!("  lens=\"{}\"\n", lens));
+        }
+
+        if let Some(budget) = self.config.token_budget {
+            let utilized: usize = files.iter()
+                .map(|f| f.content.len() / 4) // Rough token estimate
+                .sum();
+            header.push_str(&format!("  token_budget=\"{}\"\n", budget));
+            header.push_str(&format!("  utilized=\"{}\"\n", utilized));
+        }
+
+        header.push_str(">\n");
+
+        // Metadata section
+        header.push_str("  <metadata>\n");
+        header.push_str(&format!("    <version>{}</version>\n", VERSION));
+        header.push_str(&format!("    <frozen>{}</frozen>\n", self.config.frozen));
+
+        if !self.config.frozen {
+            // Only include timestamp in non-frozen mode
+            header.push_str(&format!("    <timestamp>{}</timestamp>\n",
+                chrono::Utc::now().format("%Y-%m-%dT%H:%M:%SZ")));
+        }
+
+        if let Some(ref lens) = self.config.active_lens {
+            header.push_str("    <lens_config>\n");
+            header.push_str(&format!("      <name>{}</name>\n", lens));
+            header.push_str("    </lens_config>\n");
+        }
+
+        // Attention map with file priorities
+        if !files.is_empty() {
+            header.push_str("    <attention_map>\n");
+            for file in files.iter().take(5) {
+                let priority = self.lens_manager.get_file_priority(Path::new(&file.path));
+                let tokens = file.content.len() / 4;
+                if file.was_truncated {
+                    header.push_str(&format!(
+                        "      <hotspot path=\"{}\" priority=\"{}\" tokens=\"{}\" truncated=\"true\" />\n",
+                        escape_xml_attr(&file.path), priority, tokens
+                    ));
+                } else {
+                    header.push_str(&format!(
+                        "      <hotspot path=\"{}\" priority=\"{}\" tokens=\"{}\" />\n",
+                        escape_xml_attr(&file.path), priority, tokens
+                    ));
+                }
+            }
+            header.push_str("    </attention_map>\n");
+        }
+
+        header.push_str("  </metadata>\n\n");
+        header.push_str("  <files>\n");
+
+        header
     }
 
     /// Generate complete context from path-content pairs (PURE - no I/O)
@@ -442,7 +581,7 @@ impl ContextEngine {
 }
 
 /// Version of the pm_encoder library
-pub const VERSION: &str = "0.8.0";
+pub const VERSION: &str = "0.9.0";
 
 /// Returns the version of the pm_encoder library
 pub fn version() -> &'static str {
@@ -1539,6 +1678,7 @@ pub fn serialize_file_with_format(
         OutputFormat::PlusMinus => serialize_plus_minus_entry(&entry.path, &content, &entry.md5, was_truncated, original_lines, final_lines),
         OutputFormat::Xml => serialize_xml_entry(&entry.path, &content, &entry.md5, was_truncated, original_lines, final_lines),
         OutputFormat::Markdown => serialize_markdown_entry(&entry.path, &content, &entry.md5, was_truncated, original_lines, final_lines),
+        OutputFormat::ClaudeXml => serialize_claude_xml_entry(&entry.path, &content, &entry.md5, was_truncated, original_lines, final_lines),
     }
 }
 
@@ -1631,6 +1771,45 @@ fn serialize_markdown_entry(path: &str, content: &str, md5: &str, was_truncated:
 
     // Footer with checksum
     output.push_str(&format!("*MD5: {}*\n\n", md5));
+
+    output
+}
+
+/// Serialize to Claude-optimized XML format
+/// Uses CDATA sections for code content with semantic attributes
+fn serialize_claude_xml_entry(path: &str, content: &str, md5: &str, was_truncated: bool, original_lines: usize, final_lines: usize) -> String {
+    let mut output = String::new();
+    let lang = detect_language(path);
+
+    // Opening tag with semantic attributes
+    output.push_str("<file\n");
+    output.push_str(&format!("  path=\"{}\"\n", escape_xml_attr(path)));
+    output.push_str(&format!("  language=\"{}\"\n", lang));
+    output.push_str(&format!("  md5=\"{}\"", md5));
+
+    if was_truncated {
+        output.push_str(&format!("\n  truncated=\"true\""));
+        output.push_str(&format!("\n  original_lines=\"{}\"", original_lines));
+        output.push_str(&format!("\n  final_lines=\"{}\"", final_lines));
+    }
+
+    output.push_str(">\n");
+
+    // Use CDATA to avoid escaping code content
+    // Handle content that might contain "]]>" by splitting CDATA sections
+    let safe_content = if content.contains("]]>") {
+        content.replace("]]>", "]]]]><![CDATA[>")
+    } else {
+        content.to_string()
+    };
+
+    output.push_str("<![CDATA[\n");
+    output.push_str(&safe_content);
+    if !safe_content.ends_with('\n') {
+        output.push('\n');
+    }
+    output.push_str("]]>\n");
+    output.push_str("</file>\n");
 
     output
 }
@@ -1730,6 +1909,12 @@ pub fn serialize_project_with_config(
 
     // Serialize each file entry with optional truncation and format
     let mut output = String::new();
+
+    // Add Claude-XML header with metadata if using that format
+    if config.output_format == OutputFormat::ClaudeXml {
+        output.push_str(&generate_claude_xml_header(config, &sorted_entries));
+    }
+
     for entry in sorted_entries {
         output.push_str(&serialize_file_with_format(
             &entry,
@@ -1739,7 +1924,55 @@ pub fn serialize_project_with_config(
         ));
     }
 
+    // Add Claude-XML footer if using that format
+    if config.output_format == OutputFormat::ClaudeXml {
+        output.push_str("  </files>\n</context>\n");
+    }
+
     Ok(output)
+}
+
+/// Generate Claude-XML wrapper start with metadata
+///
+/// This function generates the opening `<context>` tag with metadata
+/// for Claude-XML format output.
+pub fn generate_claude_xml_header(config: &EncoderConfig, files: &[FileEntry]) -> String {
+    let mut header = String::new();
+    header.push_str("<context\n");
+    header.push_str("  package=\"pm_encoder\"\n");
+
+    if let Some(ref lens) = config.active_lens {
+        header.push_str(&format!("  lens=\"{}\"\n", lens));
+    }
+
+    if let Some(budget) = config.token_budget {
+        let utilized: usize = files.iter()
+            .map(|f| f.content.len() / 4) // Rough token estimate
+            .sum();
+        header.push_str(&format!("  token_budget=\"{}\"\n", budget));
+        header.push_str(&format!("  utilized=\"{}\"\n", utilized));
+    }
+
+    header.push_str(">\n");
+    header.push_str("  <metadata>\n");
+    header.push_str(&format!("    <version>{}</version>\n", VERSION));
+    header.push_str(&format!("    <frozen>{}</frozen>\n", config.frozen));
+
+    if !config.frozen {
+        // Only include timestamp in non-frozen mode
+        header.push_str(&format!("    <timestamp>{}</timestamp>\n",
+            chrono::Utc::now().format("%Y-%m-%dT%H:%M:%SZ")));
+    }
+
+    if let Some(ref lens) = config.active_lens {
+        header.push_str("    <lens_config>\n");
+        header.push_str(&format!("      <name>{}</name>\n", lens));
+        header.push_str("    </lens_config>\n");
+    }
+
+    header.push_str("  </metadata>\n\n");
+    header.push_str("  <files>\n");
+    header
 }
 
 /// Serialize a project in streaming mode (immediate output)
@@ -2104,11 +2337,17 @@ impl Config {
             truncate_exclude: vec![],
             truncate_stats: false,
             output_format: OutputFormat::PlusMinus,
+            frozen: true,
+            allow_sensitive: false,
+            active_lens: Some("architecture".to_string()),
+            token_budget: Some(100_000),
         };
 
         assert_eq!(config.truncate_lines, 500);
         assert_eq!(config.truncate_mode, "smart");
         assert!(config.stream);
+        assert!(config.frozen);
+        assert_eq!(config.active_lens, Some("architecture".to_string()));
     }
 
     #[test]

@@ -236,19 +236,40 @@ pub fn apply_token_budget(
     lens_manager: &LensManager,
     strategy: &str,
 ) -> (Vec<(String, String)>, BudgetReport) {
-    // Step 1: Calculate tokens and get priorities
+    // Step 1: Calculate tokens and get priorities, applying group-based truncation
     let mut file_data: Vec<FileData> = files.into_iter()
         .map(|(path, content)| {
             let path_obj = Path::new(&path);
-            let tokens = TokenEstimator::estimate_file_tokens(path_obj, &content);
-            let priority = lens_manager.get_file_priority(path_obj);
+            let group_config = lens_manager.get_file_group_config(path_obj);
+
+            // Calculate original tokens before any truncation
+            let original_tokens = TokenEstimator::estimate_file_tokens(path_obj, &content);
+
+            // Apply group-level truncation if specified (e.g., structure mode for *.py)
+            let (final_content, method) = if let Some(ref mode) = group_config.truncate_mode {
+                if mode == "structure" {
+                    let (truncated, was_truncated) = try_truncate_to_structure(&path, &content);
+                    if was_truncated {
+                        (truncated, "truncated".to_string())
+                    } else {
+                        (content, "full".to_string())
+                    }
+                } else {
+                    (content, "full".to_string())
+                }
+            } else {
+                (content, "full".to_string())
+            };
+
+            let tokens = TokenEstimator::estimate_file_tokens(path_obj, &final_content);
+
             FileData {
                 path,
-                content,
-                priority,
+                content: final_content,
+                priority: group_config.priority,
                 tokens,
-                original_tokens: tokens,
-                method: "full".to_string(),
+                original_tokens,
+                method,
             }
         })
         .collect();
