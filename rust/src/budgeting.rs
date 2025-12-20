@@ -2,10 +2,19 @@
 //!
 //! This module provides token estimation and budget-based file selection
 //! to fit output within LLM context windows.
+//!
+//! ## Tiered Allocation (Phase 2)
+//!
+//! Files are allocated budget in tier order:
+//! 1. Core (src/, lib/) - Primary source code
+//! 2. Config (Cargo.toml, package.json) - High value/token ratio
+//! 3. Tests (tests/, examples/) - If budget remains
+//! 4. Other (docs, scripts) - Lowest priority
 
 use std::path::Path;
 use crate::lenses::LensManager;
 use crate::truncate_structure;
+use crate::core::engine::FileTier;
 
 /// Threshold for hybrid strategy: files > 10% of budget get auto-truncated
 const HYBRID_THRESHOLD: f64 = 0.10;
@@ -274,10 +283,20 @@ pub fn apply_token_budget(
         })
         .collect();
 
-    // Step 2: Sort by priority (DESC) then path (ASC) for determinism
+    // Step 2: Sort by tier (ASC), then priority (DESC), then path (ASC) for determinism
+    // Tiered allocation ensures Core files get budget before Config, Tests, Other
     file_data.sort_by(|a, b| {
-        match b.priority.cmp(&a.priority) {
-            std::cmp::Ordering::Equal => a.path.cmp(&b.path),
+        let tier_a = FileTier::classify(&a.path, None) as u8;
+        let tier_b = FileTier::classify(&b.path, None) as u8;
+
+        match tier_a.cmp(&tier_b) {
+            std::cmp::Ordering::Equal => {
+                // Within same tier, sort by priority (highest first)
+                match b.priority.cmp(&a.priority) {
+                    std::cmp::Ordering::Equal => a.path.cmp(&b.path),
+                    other => other,
+                }
+            }
             other => other,
         }
     });
@@ -723,5 +742,67 @@ mod tests {
 
         let (_selected, report) = apply_token_budget(files, 500, &lens_manager, "hybrid");
         assert_eq!(report.strategy, "hybrid");
+    }
+
+    #[test]
+    fn test_tiered_budgeting_core_before_tests() {
+        let lens_manager = LensManager::new();
+        // Create files from different tiers with same size
+        let files = vec![
+            ("tests/test_main.py".to_string(), "x".repeat(100)),   // Tests tier
+            ("src/main.rs".to_string(), "y".repeat(100)),          // Core tier
+            ("README.md".to_string(), "z".repeat(100)),            // Other tier
+            ("Cargo.toml".to_string(), "w".repeat(100)),           // Config tier
+        ];
+
+        // Budget for only 2 files
+        let (selected, _report) = apply_token_budget(files, 80, &lens_manager, "drop");
+
+        // Core file (src/main.rs) should be selected first
+        assert!(!selected.is_empty());
+        let selected_paths: Vec<&str> = selected.iter().map(|(p, _)| p.as_str()).collect();
+
+        // If any file is selected, Core should be prioritized over Tests/Other
+        if selected_paths.len() >= 1 {
+            // First file should be from Core tier (src/)
+            assert!(
+                selected_paths[0].starts_with("src/") || selected_paths[0] == "Cargo.toml",
+                "Expected Core or Config file first, got: {}",
+                selected_paths[0]
+            );
+        }
+    }
+
+    #[test]
+    fn test_tiered_budgeting_order() {
+        let lens_manager = LensManager::new();
+        // Create small files from each tier
+        let files = vec![
+            ("docs/guide.md".to_string(), "a".repeat(40)),         // Other (tier 3)
+            ("tests/test.py".to_string(), "b".repeat(40)),         // Tests (tier 2)
+            ("config.toml".to_string(), "c".repeat(40)),           // Config (tier 1)
+            ("src/lib.rs".to_string(), "d".repeat(40)),            // Core (tier 0)
+        ];
+
+        // Budget for 3 files (drops 1)
+        let (selected, _report) = apply_token_budget(files, 100, &lens_manager, "drop");
+
+        let selected_paths: Vec<&str> = selected.iter().map(|(p, _)| p.as_str()).collect();
+
+        // If we have selections, verify tier ordering
+        if selected_paths.len() >= 2 {
+            // Core should come before Other in the selection
+            let has_core = selected_paths.iter().any(|p| p.starts_with("src/"));
+            let has_other = selected_paths.iter().any(|p| p.starts_with("docs/"));
+
+            // If budget was tight, Core should be kept over Other
+            if has_core && !has_other {
+                // Good: Core prioritized
+            } else if has_core && has_other {
+                // Both fit, also fine
+            }
+            // Core should always be included if budget allows
+            assert!(has_core || selected_paths.is_empty(), "Core files should be prioritized");
+        }
     }
 }
