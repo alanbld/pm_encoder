@@ -17,9 +17,15 @@ crate-type = ["cdylib", "rlib"]
 name = "pm_encoder"
 path = "src/bin/main.rs"
 
+[[bin]]
+name = "pm_encoder_mcp"
+path = "src/bin/mcp_server.rs"
+required-features = ["mcp"]
+
 [features]
 default = []
 wasm = ["wasm-bindgen", "serde-wasm-bindgen"]
+mcp = ["rmcp", "tokio", "schemars_1"]
 
 [dependencies]
 md5 = "0.7"
@@ -37,6 +43,11 @@ walkdir = "2.4"
 # WASM dependencies (optional)
 wasm-bindgen = { version = "0.2", optional = true }
 serde-wasm-bindgen = { version = "0.6", optional = true }
+
+# MCP dependencies (optional)
+rmcp = { version = "0.8", features = ["server"], optional = true }
+tokio = { version = "1", features = ["full"], optional = true }
+schemars_1 = { package = "schemars", version = "1.1", optional = true }
 
 [target.'cfg(target_arch = "wasm32")'.dependencies]
 getrandom = { version = "0.2", features = ["js"] }
