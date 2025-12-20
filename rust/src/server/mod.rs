@@ -22,6 +22,8 @@ use crate::core::{
     ContextEngine, EncoderConfig, ZoomConfig, ZoomTarget, ZoomDepth,
     SymbolResolver, CallGraphAnalyzer, ZoomSuggestion,
     ZoomSessionStore, ContextStore, DEFAULT_ALPHA, OutputFormat,
+    // Phase 2: Rich Context
+    UsageFinder, RelatedContext,
 };
 use crate::{LensManager, parse_token_budget};
 
@@ -541,14 +543,15 @@ impl McpServer {
         let engine = ContextEngine::new();
         match engine.zoom(self.project_root.to_str().unwrap_or("."), &zoom_config) {
             Ok(mut output) => {
-                // Add zoom menu with call graph analysis
+                // Add zoom menu with call graph analysis (callees)
                 let call_analyzer = CallGraphAnalyzer::new().with_max_results(10);
                 let resolver = SymbolResolver::new();
                 let valid_calls = call_analyzer.get_valid_calls(&output, &resolver, &self.project_root);
 
+                let mut callees: Vec<ZoomSuggestion> = Vec::new();
                 if !valid_calls.is_empty() {
                     let mut seen = std::collections::HashSet::new();
-                    let suggestions: Vec<ZoomSuggestion> = valid_calls.iter()
+                    callees = valid_calls.iter()
                         .filter(|(call, _)| {
                             if let Some(ref orig) = resolved_name {
                                 if &call.name == orig {
@@ -560,11 +563,31 @@ impl McpServer {
                         .map(|(call, loc)| ZoomSuggestion::from_call(call, loc))
                         .collect();
 
-                    if !suggestions.is_empty() {
-                        let menu_items: Vec<String> = suggestions.iter()
+                    if !callees.is_empty() {
+                        let menu_items: Vec<String> = callees.iter()
                             .map(|s| format!("  {}", s.to_xml()))
                             .collect();
                         output.push_str(&format!("\n<zoom_menu>\n{}\n</zoom_menu>", menu_items.join("\n")));
+                    }
+                }
+
+                // Phase 2: Add related_context with callers (reverse call graph)
+                if let Some(ref name) = resolved_name {
+                    let usage_finder = UsageFinder::new().with_max_results(10);
+                    let callers = usage_finder.find_usages(
+                        name,
+                        &self.project_root,
+                        None,  // definition_path - let it search everywhere
+                        None,  // definition_line
+                    );
+
+                    if !callers.is_empty() || !callees.is_empty() {
+                        let related = RelatedContext {
+                            callers,
+                            callees: callees.clone(),
+                        };
+                        output.push_str("\n");
+                        output.push_str(&related.to_xml());
                     }
                 }
 
