@@ -285,6 +285,10 @@ impl McpServer {
                                 "type": "string",
                                 "description": "Zoom target (e.g., 'function=main', 'class=Config', 'file=src/lib.rs:10-50')"
                             },
+                            "path": {
+                                "type": "string",
+                                "description": "Optional: Override project root path (default: server root)"
+                            },
                             "session_id": {
                                 "type": "string",
                                 "description": "Optional session ID to track zoom history"
@@ -452,6 +456,12 @@ impl McpServer {
             }
         };
 
+        // Parse optional path override (default: server's project_root)
+        let project_root = args.get("path")
+            .and_then(|v| v.as_str())
+            .map(PathBuf::from)
+            .unwrap_or_else(|| self.project_root.clone());
+
         // Parse target (e.g., "function=main", "file=src/lib.rs:10-50")
         let parts: Vec<&str> = target_str.splitn(2, '=').collect();
         if parts.len() != 2 {
@@ -502,7 +512,7 @@ impl McpServer {
 
         if let ZoomTarget::Function(name) = &target {
             let resolver = SymbolResolver::new();
-            match resolver.find_function(name, &self.project_root) {
+            match resolver.find_function(name, &project_root) {
                 Ok(loc) => {
                     target = ZoomTarget::File {
                         path: loc.path,
@@ -516,7 +526,7 @@ impl McpServer {
             }
         } else if let ZoomTarget::Class(name) = &target {
             let resolver = SymbolResolver::new();
-            match resolver.find_class(name, &self.project_root) {
+            match resolver.find_class(name, &project_root) {
                 Ok(loc) => {
                     target = ZoomTarget::File {
                         path: loc.path,
@@ -541,12 +551,12 @@ impl McpServer {
 
         // Execute zoom
         let engine = ContextEngine::new();
-        match engine.zoom(self.project_root.to_str().unwrap_or("."), &zoom_config) {
+        match engine.zoom(project_root.to_str().unwrap_or("."), &zoom_config) {
             Ok(mut output) => {
                 // Add zoom menu with call graph analysis (callees)
                 let call_analyzer = CallGraphAnalyzer::new().with_max_results(10);
                 let resolver = SymbolResolver::new();
-                let valid_calls = call_analyzer.get_valid_calls(&output, &resolver, &self.project_root);
+                let valid_calls = call_analyzer.get_valid_calls(&output, &resolver, &project_root);
 
                 let mut callees: Vec<ZoomSuggestion> = Vec::new();
                 if !valid_calls.is_empty() {
@@ -576,7 +586,7 @@ impl McpServer {
                     let usage_finder = UsageFinder::new().with_max_results(10);
                     let callers = usage_finder.find_usages(
                         name,
-                        &self.project_root,
+                        &project_root,
                         None,  // definition_path - let it search everywhere
                         None,  // definition_line
                     );
