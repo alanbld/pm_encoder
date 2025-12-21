@@ -22,6 +22,7 @@ pub mod engine;
 pub mod zoom;
 pub mod store;
 pub mod search;
+pub mod skeleton;
 
 // Re-export commonly used types
 pub use models::{FileEntry, EncoderConfig, ProcessedFile, OutputFormat, Config};
