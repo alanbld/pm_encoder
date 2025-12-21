@@ -16,8 +16,7 @@ use lazy_static::lazy_static;
 use regex::Regex;
 use std::path::Path;
 
-use super::walker::{DefaultWalker, WalkConfig};
-use super::FileWalker;
+use super::walker::{SmartWalker, SmartWalkConfig};
 
 /// A resolved symbol location in the codebase
 #[derive(Debug, Clone)]
@@ -165,14 +164,14 @@ impl SymbolResolver {
     pub fn find_all(&self, name: &str, symbol_type: SymbolType, root: &Path) -> Vec<SymbolLocation> {
         let mut results = Vec::new();
 
-        let walker = DefaultWalker::new();
-        let config = WalkConfig {
-            ignore_patterns: self.ignore_patterns.clone(),
-            include_patterns: self.include_patterns.clone(),
+        // Use SmartWalker to respect hygiene exclusions (.venv, node_modules, etc.)
+        let config = SmartWalkConfig {
             max_file_size: 1_048_576, // 1MB
+            ..Default::default()
         };
 
-        let entries = match walker.walk(root.to_str().unwrap_or("."), &config) {
+        let walker = SmartWalker::with_config(root, config);
+        let entries = match walker.walk_as_file_entries() {
             Ok(e) => e,
             Err(_) => return results,
         };
@@ -188,14 +187,14 @@ impl SymbolResolver {
 
     /// Find a single symbol (returns first match or error)
     pub fn find_symbol(&self, name: &str, symbol_type: SymbolType, root: &Path) -> Result<SymbolLocation, String> {
-        let walker = DefaultWalker::new();
-        let config = WalkConfig {
-            ignore_patterns: self.ignore_patterns.clone(),
-            include_patterns: self.include_patterns.clone(),
+        // Use SmartWalker to respect hygiene exclusions (.venv, node_modules, etc.)
+        let config = SmartWalkConfig {
             max_file_size: 1_048_576,
+            ..Default::default()
         };
 
-        let entries = walker.walk(root.to_str().unwrap_or("."), &config)
+        let walker = SmartWalker::with_config(root, config);
+        let entries = walker.walk_as_file_entries()
             .map_err(|e| format!("Failed to walk directory: {}", e))?;
 
         for entry in entries {
@@ -624,8 +623,6 @@ impl UsageFinder {
         definition_path: Option<&str>,
         definition_line: Option<usize>,
     ) -> Vec<UsageLocation> {
-        use crate::core::walker::{SmartWalker, SmartWalkConfig};
-
         let config = SmartWalkConfig {
             max_file_size: 1_048_576,
             ..Default::default()
@@ -1188,5 +1185,97 @@ mod tests {
         assert_eq!(escape_xml("a & b"), "a &amp; b");
         assert_eq!(escape_xml("a \"b\""), "a &quot;b&quot;");
         assert_eq!(escape_xml("hello"), "hello");
+    }
+
+    #[test]
+    fn test_symbol_resolver_excludes_venv() {
+        use std::fs;
+        use tempfile::TempDir;
+
+        let temp_dir = TempDir::new().unwrap();
+        let root = temp_dir.path();
+
+        // Create a function in src/ (should be found)
+        fs::create_dir_all(root.join("src")).unwrap();
+        fs::write(
+            root.join("src/lib.py"),
+            "def target_function():\n    pass\n",
+        ).unwrap();
+
+        // Create the same function in .venv/ (should be ignored)
+        fs::create_dir_all(root.join(".venv/lib/python3.12/site-packages")).unwrap();
+        fs::write(
+            root.join(".venv/lib/python3.12/site-packages/lib.py"),
+            "def target_function():\n    pass\n",
+        ).unwrap();
+
+        // Also create in node_modules/ (should be ignored)
+        fs::create_dir_all(root.join("node_modules/some-package")).unwrap();
+        fs::write(
+            root.join("node_modules/some-package/index.js"),
+            "function target_function() {}\n",
+        ).unwrap();
+
+        let resolver = SymbolResolver::new();
+        let result = resolver.find_function("target_function", root);
+
+        // Should find the function
+        assert!(result.is_ok(), "Should find target_function");
+
+        let location = result.unwrap();
+        // Should be from src/, not .venv/ or node_modules/
+        assert!(
+            location.path.contains("src/"),
+            "Found function should be in src/, not {:?}",
+            location.path
+        );
+        assert!(
+            !location.path.contains(".venv"),
+            "Should not find in .venv, got {:?}",
+            location.path
+        );
+        assert!(
+            !location.path.contains("node_modules"),
+            "Should not find in node_modules, got {:?}",
+            location.path
+        );
+    }
+
+    #[test]
+    fn test_usage_finder_excludes_venv() {
+        use std::fs;
+        use tempfile::TempDir;
+
+        let temp_dir = TempDir::new().unwrap();
+        let root = temp_dir.path();
+
+        // Create a function definition in src/
+        fs::create_dir_all(root.join("src")).unwrap();
+        fs::write(
+            root.join("src/lib.py"),
+            "def helper():\n    pass\n\ndef caller():\n    helper()\n",
+        ).unwrap();
+
+        // Create a usage in .venv/ (should be ignored)
+        fs::create_dir_all(root.join(".venv/lib")).unwrap();
+        fs::write(
+            root.join(".venv/lib/module.py"),
+            "from lib import helper\nhelper()\n",
+        ).unwrap();
+
+        let finder = UsageFinder::new();
+        let usages = finder.find_usages("helper", root, Some("src/lib.py"), Some(1));
+
+        // Should find usage in src/lib.py (caller function)
+        assert!(!usages.is_empty(), "Should find at least one usage");
+
+        // None of the usages should be from .venv/
+        for usage in &usages {
+            assert!(
+                !usage.path.contains(".venv"),
+                "Should not find usage in .venv, got {:?}",
+                usage.path
+            );
+        }
     }
 }
