@@ -484,6 +484,15 @@ fn print_context_health(output: &str, file_count: usize) {
 }
 
 fn main() {
+    // Fix broken pipe panic when piping to head/tail/etc.
+    // Reset SIGPIPE to default behavior (terminate quietly)
+    #[cfg(unix)]
+    {
+        unsafe {
+            libc::signal(libc::SIGPIPE, libc::SIG_DFL);
+        }
+    }
+
     let cli = Cli::parse();
 
     // Handle MCP Server Mode (v2.3.0)
