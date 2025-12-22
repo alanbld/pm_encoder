@@ -159,6 +159,18 @@ struct Cli {
     format: OutputFormatArg,
 
     // ═══════════════════════════════════════════════════════════════════════════
+    // METADATA DISPLAY (v2.3.0 Chronos)
+    // ═══════════════════════════════════════════════════════════════════════════
+
+    /// Metadata display mode for file headers.
+    /// - auto: Smart logic (show if >10KB OR recent <30d OR ancient >5y)
+    /// - all: Always show full metadata (forensics/archaeology)
+    /// - none: No metadata (deterministic output for testing)
+    /// - size-only: Show size but not timestamps (bundle analysis)
+    #[arg(short = 'm', long = "metadata", value_enum, default_value = "auto")]
+    metadata: CliMetadataMode,
+
+    // ═══════════════════════════════════════════════════════════════════════════
     // DETERMINISM & PRIVACY (v2.0.0)
     // ═══════════════════════════════════════════════════════════════════════════
 
@@ -288,6 +300,31 @@ enum BudgetStrategy {
     Drop,
     Truncate,
     Hybrid,
+}
+
+/// CLI enum for metadata display mode (Chronos v2.3)
+#[derive(Debug, Clone, Copy, ValueEnum, PartialEq)]
+enum CliMetadataMode {
+    /// Smart logic: show if >10KB OR <30d OR >5y
+    Auto,
+    /// Digital archaeology: always show everything
+    All,
+    /// Testing/diffing: show nothing (deterministic)
+    None,
+    /// Bundle analysis: always show size, never time
+    #[value(name = "size-only")]
+    SizeOnly,
+}
+
+impl From<CliMetadataMode> for pm_encoder::MetadataMode {
+    fn from(mode: CliMetadataMode) -> Self {
+        match mode {
+            CliMetadataMode::Auto => pm_encoder::MetadataMode::Auto,
+            CliMetadataMode::All => pm_encoder::MetadataMode::All,
+            CliMetadataMode::None => pm_encoder::MetadataMode::None,
+            CliMetadataMode::SizeOnly => pm_encoder::MetadataMode::SizeOnly,
+        }
+    }
 }
 
 /// Parse a report-utility string into (path, score, reason).
@@ -597,6 +634,23 @@ fn main() {
 
     // Apply skeleton mode (v2.2.0)
     config.skeleton_mode = SkeletonMode::parse(&cli.skeleton).unwrap_or(SkeletonMode::Auto);
+
+    // Apply metadata mode (v2.3.0 Chronos)
+    // Environment variable PM_ENCODER_METADATA_MODE can set default, CLI overrides
+    let env_metadata_mode = std::env::var("PM_ENCODER_METADATA_MODE")
+        .ok()
+        .and_then(|s| pm_encoder::MetadataMode::parse(&s));
+
+    config.metadata_mode = if cli.metadata != CliMetadataMode::Auto {
+        // CLI explicitly set, use it
+        cli.metadata.into()
+    } else if let Some(env_mode) = env_metadata_mode {
+        // No CLI override, use env var
+        env_mode
+    } else {
+        // Default to Auto
+        pm_encoder::MetadataMode::Auto
+    };
 
     // Streaming mode warning for file output
     if cli.stream && cli.output.is_some() {
@@ -939,6 +993,7 @@ fn main() {
             active_lens: config.active_lens.clone(),
             token_budget: config.token_budget,
             skeleton_mode: config.skeleton_mode,
+            metadata_mode: config.metadata_mode,
         });
 
         match engine.zoom(project_root.to_str().unwrap(), &zoom_config) {
@@ -1123,6 +1178,7 @@ fn main() {
             .iter()
             .map(|(path, content)| pm_encoder::FileEntry {
                 path: path.clone(),
+                size: content.len() as u64,
                 content: content.clone(),
                 md5: pm_encoder::calculate_md5(content),
                 mtime: 0,

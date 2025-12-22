@@ -6,8 +6,181 @@
 //! - Markdown
 //! - Claude-XML (semantic with CDATA)
 
-use crate::core::models::{CompressionLevel, OutputFormat, ProcessedFile};
+use crate::core::models::{CompressionLevel, MetadataMode, OutputFormat, ProcessedFile};
 use crate::core::zoom::ZoomAction;
+use chrono::{TimeZone, Utc};
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
+
+// ============================================================================
+// Metadata Formatting (Chronos v2.3)
+// ============================================================================
+
+/// Format bytes to human readable (B, K, M, G)
+pub fn human_bytes(bytes: u64) -> String {
+    const UNITS: [&str; 5] = ["B", "K", "M", "G", "T"];
+    let mut value = bytes as f64;
+    let mut unit_index = 0;
+
+    while value >= 1024.0 && unit_index < UNITS.len() - 1 {
+        value /= 1024.0;
+        unit_index += 1;
+    }
+
+    if unit_index == 0 {
+        format!("{}B", bytes)
+    } else {
+        format!("{:.1}{}", value, UNITS[unit_index])
+    }
+}
+
+/// Format timestamp for 'All' mode (full precision, UTC)
+pub fn format_timestamp_full(mtime: u64) -> String {
+    if mtime == 0 {
+        return "Unknown".to_string();
+    }
+    let datetime = Utc.timestamp_opt(mtime as i64, 0);
+    match datetime {
+        chrono::LocalResult::Single(dt) => dt.format("%Y-%m-%d %H:%M UTC").to_string(),
+        _ => "Unknown".to_string(),
+    }
+}
+
+/// Format timestamp for 'Auto' mode (compact relative)
+pub fn format_timestamp_compact(mtime: u64) -> String {
+    if mtime == 0 {
+        return "?".to_string();
+    }
+
+    let now = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or(Duration::from_secs(0))
+        .as_secs();
+
+    if mtime > now {
+        return "future".to_string();
+    }
+
+    let age_secs = now - mtime;
+
+    if age_secs < 60 {
+        format!("{}s", age_secs)
+    } else if age_secs < 3600 {
+        format!("{}m", age_secs / 60)
+    } else if age_secs < 86400 {
+        format!("{}h", age_secs / 3600)
+    } else if age_secs < 30 * 86400 {
+        format!("{}d", age_secs / 86400)
+    } else {
+        // For older files: show year-month
+        let datetime = Utc.timestamp_opt(mtime as i64, 0);
+        match datetime {
+            chrono::LocalResult::Single(dt) => dt.format("%Y-%m").to_string(),
+            _ => "old".to_string(),
+        }
+    }
+}
+
+/// Main header metadata formatting with mode logic
+pub fn format_metadata_suffix(size: u64, mtime: u64, mode: MetadataMode) -> String {
+    match mode {
+        MetadataMode::None => String::new(),
+
+        MetadataMode::All => {
+            let time_str = format_timestamp_full(mtime);
+            format!(" [S:{} M:{}]", human_bytes(size), time_str)
+        }
+
+        MetadataMode::SizeOnly => {
+            format!(" [S:{}]", human_bytes(size))
+        }
+
+        MetadataMode::Auto => {
+            let mut parts = Vec::new();
+
+            // Show size if > 10KB
+            if size > 10_000 {
+                parts.push(format!("S:{}", human_bytes(size)));
+            }
+
+            // Show time if recent (<30d) OR ancient (>5y)
+            if mtime > 0 {
+                let now = SystemTime::now()
+                    .duration_since(UNIX_EPOCH)
+                    .unwrap_or(Duration::from_secs(0))
+                    .as_secs();
+
+                if mtime <= now {
+                    let age_days = (now - mtime) / 86400;
+
+                    if age_days < 30 || age_days > 5 * 365 {
+                        parts.push(format!("M:{}", format_timestamp_compact(mtime)));
+                    }
+                }
+            }
+
+            if parts.is_empty() {
+                String::new()
+            } else {
+                format!(" [{}]", parts.join(" "))
+            }
+        }
+    }
+}
+
+/// Format a Plus/Minus header line with optional metadata
+pub fn format_plusminus_header(path: &str, size: u64, mtime: u64, mode: MetadataMode) -> String {
+    let metadata = format_metadata_suffix(size, mtime, mode);
+    format!("+++ {}{}\n", path, metadata)
+}
+
+/// Format an XML file element opening tag with optional metadata attributes
+pub fn format_xml_header_attrs(size: u64, mtime: u64, mode: MetadataMode) -> String {
+    match mode {
+        MetadataMode::None => String::new(),
+        MetadataMode::All => {
+            format!(" size=\"{}\" mtime=\"{}\" mtime_human=\"{}\"",
+                size, mtime, format_timestamp_full(mtime))
+        }
+        MetadataMode::SizeOnly => {
+            format!(" size=\"{}\"", size)
+        }
+        MetadataMode::Auto => {
+            let mut attrs = Vec::new();
+
+            // Show size if > 10KB
+            if size > 10_000 {
+                attrs.push(format!("size=\"{}\"", size));
+            }
+
+            // Show time if recent (<30d) OR ancient (>5y)
+            if mtime > 0 {
+                let now = SystemTime::now()
+                    .duration_since(UNIX_EPOCH)
+                    .unwrap_or(Duration::from_secs(0))
+                    .as_secs();
+
+                if mtime <= now {
+                    let age_days = (now - mtime) / 86400;
+                    if age_days < 30 || age_days > 5 * 365 {
+                        attrs.push(format!("mtime=\"{}\"", mtime));
+                    }
+                }
+            }
+
+            if attrs.is_empty() {
+                String::new()
+            } else {
+                format!(" {}", attrs.join(" "))
+            }
+        }
+    }
+}
+
+/// Format a Markdown header with optional metadata
+pub fn format_markdown_header(path: &str, size: u64, mtime: u64, mode: MetadataMode) -> String {
+    let metadata = format_metadata_suffix(size, mtime, mode);
+    format!("## {}{}\n\n", path, metadata)
+}
 
 /// Trait for output format serializers
 pub trait Serializer: Send + Sync {
@@ -336,5 +509,184 @@ mod tests {
 
         let md = get_serializer(OutputFormat::Markdown);
         assert_eq!(md.extension(), "md");
+    }
+
+    // ========================================================================
+    // Chronos v2.3 Metadata Formatting Tests
+    // ========================================================================
+
+    #[test]
+    fn test_human_bytes_formatting() {
+        assert_eq!(human_bytes(0), "0B");
+        assert_eq!(human_bytes(500), "500B");
+        assert_eq!(human_bytes(1024), "1.0K");
+        assert_eq!(human_bytes(15_000), "14.6K");
+        assert_eq!(human_bytes(1_500_000), "1.4M");
+        assert_eq!(human_bytes(3_000_000_000), "2.8G");
+        assert_eq!(human_bytes(1_099_511_627_776), "1.0T");
+    }
+
+    #[test]
+    fn test_format_timestamp_full() {
+        // Test known timestamp: 2024-01-15 12:00:00 UTC
+        let mtime = 1705320000_u64;
+        let result = format_timestamp_full(mtime);
+        assert!(result.contains("2024-01-15"));
+        assert!(result.contains("UTC"));
+    }
+
+    #[test]
+    fn test_format_timestamp_full_zero() {
+        assert_eq!(format_timestamp_full(0), "Unknown");
+    }
+
+    #[test]
+    fn test_format_timestamp_compact_recent() {
+        let now = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_secs();
+
+        // 30 seconds ago
+        let result = format_timestamp_compact(now - 30);
+        assert!(result.ends_with("s"));
+
+        // 10 minutes ago
+        let result = format_timestamp_compact(now - 600);
+        assert!(result.ends_with("m"));
+
+        // 5 hours ago
+        let result = format_timestamp_compact(now - 18000);
+        assert!(result.ends_with("h"));
+
+        // 10 days ago
+        let result = format_timestamp_compact(now - 864000);
+        assert!(result.ends_with("d"));
+    }
+
+    #[test]
+    fn test_format_timestamp_compact_old() {
+        // 2020-01-15 - should show YYYY-MM
+        let old_mtime = 1579046400_u64;
+        let result = format_timestamp_compact(old_mtime);
+        assert!(result.contains("2020"));
+    }
+
+    #[test]
+    fn test_format_timestamp_compact_zero() {
+        assert_eq!(format_timestamp_compact(0), "?");
+    }
+
+    #[test]
+    fn test_metadata_mode_none() {
+        let result = format_metadata_suffix(150_000, 1705320000, MetadataMode::None);
+        assert!(result.is_empty());
+    }
+
+    #[test]
+    fn test_metadata_mode_all() {
+        let result = format_metadata_suffix(150_000, 1705320000, MetadataMode::All);
+        assert!(result.contains("S:"));
+        assert!(result.contains("M:"));
+        assert!(result.contains("UTC"));
+    }
+
+    #[test]
+    fn test_metadata_mode_size_only() {
+        let result = format_metadata_suffix(150_000, 1705320000, MetadataMode::SizeOnly);
+        assert!(result.contains("S:"));
+        assert!(!result.contains("M:"));
+        assert!(!result.contains("UTC"));
+    }
+
+    #[test]
+    fn test_metadata_mode_auto_large_recent() {
+        let now = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_secs();
+
+        // Large (>10KB) and recent (<30 days) - should show both
+        let result = format_metadata_suffix(150_000, now - 86400, MetadataMode::Auto);
+        assert!(result.contains("S:"));
+        assert!(result.contains("M:"));
+    }
+
+    #[test]
+    fn test_metadata_mode_auto_small_old() {
+        // Small (<10KB) and old (>30d, <5y) - should show nothing
+        let old_mtime = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_secs() - (365 * 86400); // 1 year ago
+
+        let result = format_metadata_suffix(5_000, old_mtime, MetadataMode::Auto);
+        assert!(result.is_empty());
+    }
+
+    #[test]
+    fn test_metadata_mode_auto_ancient() {
+        // Small but ancient (>5 years) - should show time only
+        let ancient_mtime = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_secs() - (6 * 365 * 86400); // 6 years ago
+
+        let result = format_metadata_suffix(5_000, ancient_mtime, MetadataMode::Auto);
+        assert!(!result.contains("S:")); // Small, so no size
+        assert!(result.contains("M:")); // Ancient, so show time
+    }
+
+    #[test]
+    fn test_format_plusminus_header() {
+        let header = format_plusminus_header("src/main.rs", 15_000, 1705320000, MetadataMode::All);
+        assert!(header.starts_with("+++ src/main.rs"));
+        assert!(header.contains("[S:"));
+        assert!(header.contains("M:"));
+    }
+
+    #[test]
+    fn test_format_plusminus_header_none_mode() {
+        let header = format_plusminus_header("src/main.rs", 15_000, 1705320000, MetadataMode::None);
+        assert_eq!(header, "+++ src/main.rs\n");
+    }
+
+    #[test]
+    fn test_format_xml_header_attrs_all() {
+        let attrs = format_xml_header_attrs(15_000, 1705320000, MetadataMode::All);
+        assert!(attrs.contains("size=\"15000\""));
+        assert!(attrs.contains("mtime=\"1705320000\""));
+        assert!(attrs.contains("mtime_human="));
+    }
+
+    #[test]
+    fn test_format_xml_header_attrs_none() {
+        let attrs = format_xml_header_attrs(15_000, 1705320000, MetadataMode::None);
+        assert!(attrs.is_empty());
+    }
+
+    #[test]
+    fn test_format_xml_header_attrs_size_only() {
+        let attrs = format_xml_header_attrs(15_000, 1705320000, MetadataMode::SizeOnly);
+        assert!(attrs.contains("size=\"15000\""));
+        assert!(!attrs.contains("mtime="));
+    }
+
+    #[test]
+    fn test_format_markdown_header() {
+        let header = format_markdown_header("README.md", 50_000, 1705320000, MetadataMode::All);
+        assert!(header.starts_with("## README.md"));
+        assert!(header.contains("[S:"));
+    }
+
+    #[test]
+    fn test_metadata_mode_parse() {
+        assert_eq!(MetadataMode::parse("auto"), Some(MetadataMode::Auto));
+        assert_eq!(MetadataMode::parse("AUTO"), Some(MetadataMode::Auto));
+        assert_eq!(MetadataMode::parse("all"), Some(MetadataMode::All));
+        assert_eq!(MetadataMode::parse("none"), Some(MetadataMode::None));
+        assert_eq!(MetadataMode::parse("size-only"), Some(MetadataMode::SizeOnly));
+        assert_eq!(MetadataMode::parse("size_only"), Some(MetadataMode::SizeOnly));
+        assert_eq!(MetadataMode::parse("invalid"), None);
     }
 }

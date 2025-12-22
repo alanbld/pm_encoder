@@ -9,7 +9,9 @@ use crate::core::models::{CompressionLevel, EncoderConfig, FileEntry, OutputForm
 use crate::core::serialization::{get_serializer, Serializer};
 use crate::core::skeleton::{AdaptiveAllocator, FileAllocation, Language, Skeletonizer};
 use crate::core::walker::{DefaultWalker, FileWalker, WalkConfig};
-use crate::core::zoom::{ZoomAction, ZoomConfig, ZoomTarget, ZoomDepth};
+use crate::core::zoom::{ZoomAction, ZoomConfig, ZoomTarget};
+#[cfg(test)]
+use crate::core::zoom::ZoomDepth;
 
 /// File tier for prioritized budgeting
 /// Core domain files get budget first, then config, tests last
@@ -643,6 +645,7 @@ impl ContextEngine {
                     let content = lines[s..e_idx].join("\n");
                     FileEntry {
                         path: e.path.clone(),
+                        size: content.len() as u64,
                         content,
                         md5: e.md5.clone(),
                         mtime: e.mtime,
@@ -1136,9 +1139,9 @@ mod tests {
         let engine = ContextEngine::with_config(config);
 
         let entries = vec![
-            FileEntry { path: "a.txt".to_string(), content: "a".to_string(), md5: "a".to_string(), mtime: 300, ctime: 0 },
-            FileEntry { path: "b.txt".to_string(), content: "b".to_string(), md5: "b".to_string(), mtime: 100, ctime: 0 },
-            FileEntry { path: "c.txt".to_string(), content: "c".to_string(), md5: "c".to_string(), mtime: 200, ctime: 0 },
+            FileEntry { path: "a.txt".to_string(), content: "a".to_string(), md5: "a".to_string(), mtime: 300, ctime: 0, size: 1 },
+            FileEntry { path: "b.txt".to_string(), content: "b".to_string(), md5: "b".to_string(), mtime: 100, ctime: 0, size: 1 },
+            FileEntry { path: "c.txt".to_string(), content: "c".to_string(), md5: "c".to_string(), mtime: 200, ctime: 0, size: 1 },
         ];
 
         let sorted = engine.sort_entries(entries);
@@ -1155,8 +1158,8 @@ mod tests {
         let engine = ContextEngine::with_config(config);
 
         let entries = vec![
-            FileEntry { path: "a.txt".to_string(), content: "a".to_string(), md5: "a".to_string(), mtime: 100, ctime: 0 },
-            FileEntry { path: "b.txt".to_string(), content: "b".to_string(), md5: "b".to_string(), mtime: 300, ctime: 0 },
+            FileEntry { path: "a.txt".to_string(), content: "a".to_string(), md5: "a".to_string(), mtime: 100, ctime: 0, size: 1 },
+            FileEntry { path: "b.txt".to_string(), content: "b".to_string(), md5: "b".to_string(), mtime: 300, ctime: 0, size: 1 },
         ];
 
         let sorted = engine.sort_entries(entries);
@@ -1172,8 +1175,8 @@ mod tests {
         let engine = ContextEngine::with_config(config);
 
         let entries = vec![
-            FileEntry { path: "a.txt".to_string(), content: "a".to_string(), md5: "a".to_string(), mtime: 0, ctime: 300 },
-            FileEntry { path: "b.txt".to_string(), content: "b".to_string(), md5: "b".to_string(), mtime: 0, ctime: 100 },
+            FileEntry { path: "a.txt".to_string(), content: "a".to_string(), md5: "a".to_string(), mtime: 0, ctime: 300, size: 1 },
+            FileEntry { path: "b.txt".to_string(), content: "b".to_string(), md5: "b".to_string(), mtime: 0, ctime: 100, size: 1 },
         ];
 
         let sorted = engine.sort_entries(entries);
@@ -1189,8 +1192,8 @@ mod tests {
         let engine = ContextEngine::with_config(config);
 
         let entries = vec![
-            FileEntry { path: "a.txt".to_string(), content: "a".to_string(), md5: "a".to_string(), mtime: 0, ctime: 100 },
-            FileEntry { path: "b.txt".to_string(), content: "b".to_string(), md5: "b".to_string(), mtime: 0, ctime: 300 },
+            FileEntry { path: "a.txt".to_string(), content: "a".to_string(), md5: "a".to_string(), mtime: 0, ctime: 100, size: 1 },
+            FileEntry { path: "b.txt".to_string(), content: "b".to_string(), md5: "b".to_string(), mtime: 0, ctime: 300, size: 1 },
         ];
 
         let sorted = engine.sort_entries(entries);

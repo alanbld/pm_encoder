@@ -7,6 +7,40 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::fs;
 use std::path::PathBuf;
+use regex::Regex;
+
+/// Check if a file appears in a plusminus header (with or without metadata)
+/// Matches: ++++++++++ filename ++++++++++ or ++++++++++ filename [metadata] ++++++++++
+fn file_in_plusminus_header(output: &str, filename: &str) -> bool {
+    // Escape special regex characters in filename
+    let escaped = regex::escape(filename);
+    // Match header with optional metadata suffix before closing ++++++++++
+    let pattern = format!(r"\+\+\+\+\+\+\+\+\+\+ {} (\[.*?\] )?\+\+\+\+\+\+\+\+\+\+", escaped);
+    let re = Regex::new(&pattern).unwrap();
+    re.is_match(output)
+}
+
+/// Find position of file in plusminus header (for order checking)
+fn file_header_position(output: &str, filename: &str) -> Option<usize> {
+    let escaped = regex::escape(filename);
+    let pattern = format!(r"\+\+\+\+\+\+\+\+\+\+ {} (\[.*?\] )?\+\+\+\+\+\+\+\+\+\+", escaped);
+    let re = Regex::new(&pattern).unwrap();
+    re.find(output).map(|m| m.start())
+}
+
+/// Check if a content string matches in output, with flexible header matching
+/// If content_str looks like a plusminus header, use flexible matching
+fn output_contains_flexible(output: &str, content_str: &str) -> bool {
+    // Check if this is an exact plusminus header pattern
+    let header_re = Regex::new(r"^\+\+\+\+\+\+\+\+\+\+ (.+?) \+\+\+\+\+\+\+\+\+\+$").unwrap();
+    if let Some(caps) = header_re.captures(content_str) {
+        // Extract filename and use flexible matching
+        let filename = caps.get(1).unwrap().as_str();
+        return file_in_plusminus_header(output, filename);
+    }
+    // Otherwise, use exact match
+    output.contains(content_str)
+}
 
 /// Test vector structure
 #[derive(Debug, Deserialize, Serialize)]
@@ -87,10 +121,10 @@ fn test_config_01_file_loading() {
     let output = pm_encoder::serialize_project(temp_dir.to_str().unwrap())
         .expect("Serialization failed");
 
-    // Check that expected files are included
+    // Check that expected files are included (with or without metadata)
     for file in &vector.expected.files_included {
         assert!(
-            output.contains(&format!("++++++++++ {} ++++++++++", file)),
+            file_in_plusminus_header(&output, file),
             "Output should contain file: {}",
             file
         );
@@ -99,16 +133,16 @@ fn test_config_01_file_loading() {
     // Check that expected files are excluded
     for file in &vector.expected.files_excluded {
         assert!(
-            !output.contains(&format!("++++++++++ {} ++++++++++", file)),
+            !file_in_plusminus_header(&output, file),
             "Output should NOT contain file: {}",
             file
         );
     }
 
-    // Check for specific content strings
+    // Check for specific content strings (with flexible header matching)
     for content_str in &vector.expected.output_contains {
         assert!(
-            output.contains(content_str),
+            output_contains_flexible(&output, content_str),
             "Output should contain: {}",
             content_str
         );
@@ -192,10 +226,10 @@ fn test_config_02_cli_override() {
     let output = pm_encoder::serialize_project_with_config(temp_dir.to_str().unwrap(), &config)
         .expect("Serialization failed");
 
-    // Check that expected files are included
+    // Check that expected files are included (with or without metadata)
     for file in &vector.expected.files_included {
         assert!(
-            output.contains(&format!("++++++++++ {} ++++++++++", file)),
+            file_in_plusminus_header(&output, file),
             "Output should contain file: {}",
             file
         );
@@ -204,16 +238,16 @@ fn test_config_02_cli_override() {
     // Check that expected files are excluded
     for file in &vector.expected.files_excluded {
         assert!(
-            !output.contains(&format!("++++++++++ {} ++++++++++", file)),
+            !file_in_plusminus_header(&output, file),
             "Output should NOT contain file: {}",
             file
         );
     }
 
-    // Check for specific content strings
+    // Check for specific content strings (with flexible header matching)
     for content_str in &vector.expected.output_contains {
         assert!(
-            output.contains(content_str),
+            output_contains_flexible(&output, content_str),
             "Output should contain: {}",
             content_str
         );
@@ -246,10 +280,10 @@ fn test_config_03_ignore_patterns() {
     let output = pm_encoder::serialize_project(temp_dir.to_str().unwrap())
         .expect("Serialization failed");
 
-    // Check that expected files are included
+    // Check that expected files are included (with or without metadata)
     for file in &vector.expected.files_included {
         assert!(
-            output.contains(&format!("++++++++++ {} ++++++++++", file)),
+            file_in_plusminus_header(&output, file),
             "Output should contain file: {}",
             file
         );
@@ -258,7 +292,7 @@ fn test_config_03_ignore_patterns() {
     // Check that expected files are excluded
     for file in &vector.expected.files_excluded {
         assert!(
-            !output.contains(&format!("++++++++++ {} ++++++++++", file)),
+            !file_in_plusminus_header(&output, file),
             "Output should NOT contain file: {}",
             file
         );
@@ -291,10 +325,10 @@ fn test_config_04_include_patterns() {
     let output = pm_encoder::serialize_project(temp_dir.to_str().unwrap())
         .expect("Serialization failed");
 
-    // Check that expected files are included
+    // Check that expected files are included (with or without metadata)
     for file in &vector.expected.files_included {
         assert!(
-            output.contains(&format!("++++++++++ {} ++++++++++", file)),
+            file_in_plusminus_header(&output, file),
             "Output should contain file: {}",
             file
         );
@@ -303,7 +337,7 @@ fn test_config_04_include_patterns() {
     // Check that expected files are excluded
     for file in &vector.expected.files_excluded {
         assert!(
-            !output.contains(&format!("++++++++++ {} ++++++++++", file)),
+            !file_in_plusminus_header(&output, file),
             "Output should NOT contain file: {}",
             file
         );
@@ -336,10 +370,10 @@ fn test_config_05_pattern_precedence() {
     let output = pm_encoder::serialize_project(temp_dir.to_str().unwrap())
         .expect("Serialization failed");
 
-    // Check that expected files are included
+    // Check that expected files are included (with or without metadata)
     for file in &vector.expected.files_included {
         assert!(
-            output.contains(&format!("++++++++++ {} ++++++++++", file)),
+            file_in_plusminus_header(&output, file),
             "Output should contain file: {}",
             file
         );
@@ -348,16 +382,16 @@ fn test_config_05_pattern_precedence() {
     // Check that expected files are excluded
     for file in &vector.expected.files_excluded {
         assert!(
-            !output.contains(&format!("++++++++++ {} ++++++++++", file)),
+            !file_in_plusminus_header(&output, file),
             "Output should NOT contain file: {}",
             file
         );
     }
 
-    // Check for specific content strings
+    // Check for specific content strings (with flexible header matching)
     for content_str in &vector.expected.output_contains {
         assert!(
-            output.contains(content_str),
+            output_contains_flexible(&output, content_str),
             "Output should contain: {}",
             content_str
         );
@@ -394,11 +428,11 @@ fn test_serial_01_basic_sorting() {
     let output = pm_encoder::serialize_project(temp_dir.to_str().unwrap())
         .expect("Serialization failed");
 
-    // Verify files appear in correct order
+    // Verify files appear in correct order (using flexible header matching)
     let file_positions: Vec<_> = vector.expected.files_included.iter()
         .map(|file| {
-            let header = format!("++++++++++ {} ++++++++++", file);
-            output.find(&header).expect(&format!("File {} not found in output", file))
+            file_header_position(&output, file)
+                .expect(&format!("File {} not found in output", file))
         })
         .collect();
 
@@ -457,10 +491,10 @@ fn test_serial_03_single_file() {
     let output = pm_encoder::serialize_project(temp_dir.to_str().unwrap())
         .expect("Serialization failed");
 
-    // Check that expected content strings are present
+    // Check that expected content strings are present (with flexible header matching)
     for content_str in &vector.expected.output_contains {
         assert!(
-            output.contains(content_str),
+            output_contains_flexible(&output, content_str),
             "Output should contain: {}",
             content_str
         );
@@ -493,10 +527,10 @@ fn test_serial_04_nested_structure() {
     let output = pm_encoder::serialize_project(temp_dir.to_str().unwrap())
         .expect("Serialization failed");
 
-    // Verify all files are included
+    // Verify all files are included (with flexible metadata matching)
     for file in &vector.expected.files_included {
         assert!(
-            output.contains(&format!("++++++++++ {} ++++++++++", file)),
+            file_in_plusminus_header(&output, file),
             "Output should contain file: {}",
             file
         );
@@ -505,8 +539,8 @@ fn test_serial_04_nested_structure() {
     // Verify sort order
     let file_positions: Vec<_> = vector.expected.files_included.iter()
         .map(|file| {
-            let header = format!("++++++++++ {} ++++++++++", file);
-            output.find(&header).expect(&format!("File {} not found in output", file))
+            file_header_position(&output, file)
+                .expect(&format!("File {} not found in output", file))
         })
         .collect();
 
@@ -545,16 +579,16 @@ fn test_serial_05_newline_handling() {
     // Verify all files are included
     for file in &vector.expected.files_included {
         assert!(
-            output.contains(&format!("++++++++++ {} ++++++++++", file)),
+            file_in_plusminus_header(&output, file),
             "Output should contain file: {}",
             file
         );
     }
 
-    // Verify content strings are present
+    // Verify content strings are present (with flexible header matching)
     for content_str in &vector.expected.output_contains {
         assert!(
-            output.contains(content_str),
+            output_contains_flexible(&output, content_str),
             "Output should contain: {}",
             content_str
         );
@@ -594,16 +628,16 @@ fn test_analyzer_01_python_class() {
     // Check that expected files are included
     for file in &vector.expected.files_included {
         assert!(
-            output.contains(&format!("++++++++++ {} ++++++++++", file)),
+            file_in_plusminus_header(&output, file),
             "Output should contain file: {}",
             file
         );
     }
 
-    // Check for specific content strings
+    // Check for specific content strings (with flexible header matching)
     for content_str in &vector.expected.output_contains {
         assert!(
-            output.contains(content_str),
+            output_contains_flexible(&output, content_str),
             "Output should contain: {}",
             content_str
         );
@@ -639,16 +673,16 @@ fn test_analyzer_02_python_function() {
     // Check that expected files are included
     for file in &vector.expected.files_included {
         assert!(
-            output.contains(&format!("++++++++++ {} ++++++++++", file)),
+            file_in_plusminus_header(&output, file),
             "Output should contain file: {}",
             file
         );
     }
 
-    // Check for specific content strings
+    // Check for specific content strings (with flexible header matching)
     for content_str in &vector.expected.output_contains {
         assert!(
-            output.contains(content_str),
+            output_contains_flexible(&output, content_str),
             "Output should contain: {}",
             content_str
         );
@@ -684,16 +718,16 @@ fn test_analyzer_03_python_imports() {
     // Check that expected files are included
     for file in &vector.expected.files_included {
         assert!(
-            output.contains(&format!("++++++++++ {} ++++++++++", file)),
+            file_in_plusminus_header(&output, file),
             "Output should contain file: {}",
             file
         );
     }
 
-    // Check for specific content strings
+    // Check for specific content strings (with flexible header matching)
     for content_str in &vector.expected.output_contains {
         assert!(
-            output.contains(content_str),
+            output_contains_flexible(&output, content_str),
             "Output should contain: {}",
             content_str
         );
@@ -729,16 +763,16 @@ fn test_analyzer_04_javascript_function() {
     // Check that expected files are included
     for file in &vector.expected.files_included {
         assert!(
-            output.contains(&format!("++++++++++ {} ++++++++++", file)),
+            file_in_plusminus_header(&output, file),
             "Output should contain file: {}",
             file
         );
     }
 
-    // Check for specific content strings
+    // Check for specific content strings (with flexible header matching)
     for content_str in &vector.expected.output_contains {
         assert!(
-            output.contains(content_str),
+            output_contains_flexible(&output, content_str),
             "Output should contain: {}",
             content_str
         );
@@ -774,16 +808,16 @@ fn test_analyzer_05_javascript_imports() {
     // Check that expected files are included
     for file in &vector.expected.files_included {
         assert!(
-            output.contains(&format!("++++++++++ {} ++++++++++", file)),
+            file_in_plusminus_header(&output, file),
             "Output should contain file: {}",
             file
         );
     }
 
-    // Check for specific content strings
+    // Check for specific content strings (with flexible header matching)
     for content_str in &vector.expected.output_contains {
         assert!(
-            output.contains(content_str),
+            output_contains_flexible(&output, content_str),
             "Output should contain: {}",
             content_str
         );
@@ -819,16 +853,16 @@ fn test_analyzer_06_rust_struct() {
     // Check that expected files are included
     for file in &vector.expected.files_included {
         assert!(
-            output.contains(&format!("++++++++++ {} ++++++++++", file)),
+            file_in_plusminus_header(&output, file),
             "Output should contain file: {}",
             file
         );
     }
 
-    // Check for specific content strings
+    // Check for specific content strings (with flexible header matching)
     for content_str in &vector.expected.output_contains {
         assert!(
-            output.contains(content_str),
+            output_contains_flexible(&output, content_str),
             "Output should contain: {}",
             content_str
         );
@@ -864,16 +898,16 @@ fn test_analyzer_07_rust_function() {
     // Check that expected files are included
     for file in &vector.expected.files_included {
         assert!(
-            output.contains(&format!("++++++++++ {} ++++++++++", file)),
+            file_in_plusminus_header(&output, file),
             "Output should contain file: {}",
             file
         );
     }
 
-    // Check for specific content strings
+    // Check for specific content strings (with flexible header matching)
     for content_str in &vector.expected.output_contains {
         assert!(
-            output.contains(content_str),
+            output_contains_flexible(&output, content_str),
             "Output should contain: {}",
             content_str
         );
@@ -909,16 +943,16 @@ fn test_analyzer_08_shell_functions() {
     // Check that expected files are included
     for file in &vector.expected.files_included {
         assert!(
-            output.contains(&format!("++++++++++ {} ++++++++++", file)),
+            file_in_plusminus_header(&output, file),
             "Output should contain file: {}",
             file
         );
     }
 
-    // Check for specific content strings
+    // Check for specific content strings (with flexible header matching)
     for content_str in &vector.expected.output_contains {
         assert!(
-            output.contains(content_str),
+            output_contains_flexible(&output, content_str),
             "Output should contain: {}",
             content_str
         );
@@ -954,16 +988,16 @@ fn test_analyzer_09_mixed_project() {
     // Check that expected files are included
     for file in &vector.expected.files_included {
         assert!(
-            output.contains(&format!("++++++++++ {} ++++++++++", file)),
+            file_in_plusminus_header(&output, file),
             "Output should contain file: {}",
             file
         );
     }
 
-    // Check for specific content strings
+    // Check for specific content strings (with flexible header matching)
     for content_str in &vector.expected.output_contains {
         assert!(
-            output.contains(content_str),
+            output_contains_flexible(&output, content_str),
             "Output should contain: {}",
             content_str
         );
@@ -999,16 +1033,16 @@ fn test_analyzer_10_structure_preservation() {
     // Check that expected files are included
     for file in &vector.expected.files_included {
         assert!(
-            output.contains(&format!("++++++++++ {} ++++++++++", file)),
+            file_in_plusminus_header(&output, file),
             "Output should contain file: {}",
             file
         );
     }
 
-    // Check for specific content strings
+    // Check for specific content strings (with flexible header matching)
     for content_str in &vector.expected.output_contains {
         assert!(
-            output.contains(content_str),
+            output_contains_flexible(&output, content_str),
             "Output should contain: {}",
             content_str
         );

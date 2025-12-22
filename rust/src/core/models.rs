@@ -18,12 +18,15 @@ pub struct FileEntry {
     pub mtime: u64,
     /// Creation time (seconds since epoch, falls back to mtime on some systems)
     pub ctime: u64,
+    /// File size in bytes
+    pub size: u64,
 }
 
 impl FileEntry {
     /// Create a new FileEntry
     pub fn new(path: impl Into<String>, content: impl Into<String>) -> Self {
         let content = content.into();
+        let size = content.len() as u64;
         let md5 = calculate_md5(&content);
         Self {
             path: path.into(),
@@ -31,6 +34,7 @@ impl FileEntry {
             md5,
             mtime: 0,
             ctime: 0,
+            size,
         }
     }
 
@@ -38,6 +42,12 @@ impl FileEntry {
     pub fn with_timestamps(mut self, mtime: u64, ctime: u64) -> Self {
         self.mtime = mtime;
         self.ctime = ctime;
+        self
+    }
+
+    /// Create a FileEntry with size (overrides content-based size)
+    pub fn with_size(mut self, size: u64) -> Self {
+        self.size = size;
         self
     }
 
@@ -147,6 +157,8 @@ pub struct EncoderConfig {
     /// - "true": Always enable
     /// - "false": Always disable
     pub skeleton_mode: SkeletonMode,
+    /// Metadata display mode for file headers (Chronos v2.3)
+    pub metadata_mode: MetadataMode,
 }
 
 /// Skeleton mode configuration
@@ -159,6 +171,36 @@ pub enum SkeletonMode {
     Enabled,
     /// Always disable skeleton compression
     Disabled,
+}
+
+/// Metadata display mode for file headers (Chronos v2.3)
+///
+/// Controls whether and how file metadata (size, modification time) appears
+/// in serialized output headers.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+pub enum MetadataMode {
+    /// Smart logic: show if file >10KB OR modified <30d OR modified >5y
+    #[default]
+    Auto,
+    /// Digital archaeology: always show full metadata (size + timestamp UTC)
+    All,
+    /// Testing/diffing: no metadata for deterministic output
+    None,
+    /// Bundle analysis: always show size, never show time
+    SizeOnly,
+}
+
+impl MetadataMode {
+    /// Parse metadata mode from string
+    pub fn parse(s: &str) -> Option<Self> {
+        match s.to_lowercase().as_str() {
+            "auto" => Some(MetadataMode::Auto),
+            "all" => Some(MetadataMode::All),
+            "none" => Some(MetadataMode::None),
+            "size-only" | "size_only" | "sizeonly" => Some(MetadataMode::SizeOnly),
+            _ => None,
+        }
+    }
 }
 
 impl SkeletonMode {
@@ -209,6 +251,7 @@ impl Default for EncoderConfig {
             active_lens: None,
             token_budget: None,
             skeleton_mode: SkeletonMode::Auto,
+            metadata_mode: MetadataMode::Auto,
         }
     }
 }
@@ -253,6 +296,12 @@ impl EncoderConfig {
     /// Builder pattern: set skeleton mode
     pub fn with_skeleton_mode(mut self, mode: SkeletonMode) -> Self {
         self.skeleton_mode = mode;
+        self
+    }
+
+    /// Builder pattern: set metadata mode (Chronos v2.3)
+    pub fn with_metadata_mode(mut self, mode: MetadataMode) -> Self {
+        self.metadata_mode = mode;
         self
     }
 }

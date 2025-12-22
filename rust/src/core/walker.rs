@@ -208,8 +208,8 @@ impl FileWalker for DefaultWalker {
                 None => continue,
             };
 
-            // Get timestamps
-            let (mtime, ctime) = metadata
+            // Get timestamps and size
+            let (mtime, ctime, size) = metadata
                 .map(|m| {
                     let mtime = m.modified()
                         .ok()
@@ -221,11 +221,12 @@ impl FileWalker for DefaultWalker {
                         .and_then(|t| t.duration_since(SystemTime::UNIX_EPOCH).ok())
                         .map(|d| d.as_secs())
                         .unwrap_or(mtime);
-                    (mtime, ctime)
+                    let size = m.len();
+                    (mtime, ctime, size)
                 })
-                .unwrap_or((0, 0));
+                .unwrap_or((0, 0, content.len() as u64));
 
-            entries.push(FileEntry::new(&relative_path, content).with_timestamps(mtime, ctime));
+            entries.push(FileEntry::new(&relative_path, content).with_timestamps(mtime, ctime).with_size(size));
         }
 
         Ok(entries)

@@ -56,6 +56,8 @@ pub struct FileEntry {
     pub mtime: u64,
     /// Creation time (seconds since epoch, falls back to mtime on some systems)
     pub ctime: u64,
+    /// File size in bytes
+    pub size: u64,
 }
 
 /// Configuration loaded from .pm_encoder_config.json
@@ -99,6 +101,7 @@ impl OutputFormat {
 }
 
 pub use core::SkeletonMode;
+pub use core::models::MetadataMode;
 
 /// Configuration for the encoder (expanded for CLI parity)
 #[derive(Debug, Clone)]
@@ -137,6 +140,8 @@ pub struct EncoderConfig {
     pub token_budget: Option<usize>,
     /// Skeleton mode: 'auto', 'true', or 'false' (v2.2.0)
     pub skeleton_mode: SkeletonMode,
+    /// Metadata display mode: 'auto', 'all', 'none', 'size-only' (v2.3.0 Chronos)
+    pub metadata_mode: MetadataMode,
 }
 
 impl Default for EncoderConfig {
@@ -167,6 +172,7 @@ impl Default for EncoderConfig {
             active_lens: None, // No lens by default
             token_budget: None, // No budget by default
             skeleton_mode: SkeletonMode::Auto, // Auto-enable if budget is set
+            metadata_mode: MetadataMode::Auto, // Smart metadata display (v2.3.0)
         }
     }
 }
@@ -970,6 +976,7 @@ pub fn walk_directory_iter(
 
             Some(FileEntry {
                 path: path_str.to_string(),
+                size: content.len() as u64,
                 content,
                 md5,
                 mtime,
@@ -1662,6 +1669,18 @@ pub fn serialize_file_with_format(
     truncate_mode: &str,
     format: OutputFormat,
 ) -> String {
+    // Use default metadata mode (None for backwards compatibility)
+    serialize_file_with_format_and_metadata(entry, truncate_lines, truncate_mode, format, MetadataMode::None)
+}
+
+/// Serialize a file entry with format and metadata support (Chronos v2.3)
+pub fn serialize_file_with_format_and_metadata(
+    entry: &FileEntry,
+    truncate_lines: usize,
+    truncate_mode: &str,
+    format: OutputFormat,
+    metadata_mode: MetadataMode,
+) -> String {
     let original_lines = count_lines_python_style(&entry.content);
 
     // Apply truncation and track if file was truncated
@@ -1686,22 +1705,26 @@ pub fn serialize_file_with_format(
     let final_lines = count_lines_python_style(&content);
 
     match format {
-        OutputFormat::PlusMinus => serialize_plus_minus_entry(&entry.path, &content, &entry.md5, was_truncated, original_lines, final_lines),
-        OutputFormat::Xml => serialize_xml_entry(&entry.path, &content, &entry.md5, was_truncated, original_lines, final_lines),
-        OutputFormat::Markdown => serialize_markdown_entry(&entry.path, &content, &entry.md5, was_truncated, original_lines, final_lines),
-        OutputFormat::ClaudeXml => serialize_claude_xml_entry(&entry.path, &content, &entry.md5, was_truncated, original_lines, final_lines),
+        OutputFormat::PlusMinus => serialize_plus_minus_entry(&entry.path, &content, &entry.md5, entry.size, entry.mtime, was_truncated, original_lines, final_lines, metadata_mode),
+        OutputFormat::Xml => serialize_xml_entry(&entry.path, &content, &entry.md5, entry.size, entry.mtime, was_truncated, original_lines, final_lines, metadata_mode),
+        OutputFormat::Markdown => serialize_markdown_entry(&entry.path, &content, &entry.md5, entry.size, entry.mtime, was_truncated, original_lines, final_lines, metadata_mode),
+        OutputFormat::ClaudeXml => serialize_claude_xml_entry(&entry.path, &content, &entry.md5, entry.size, entry.mtime, was_truncated, original_lines, final_lines, metadata_mode),
     }
 }
 
-/// Serialize to Plus/Minus format
-fn serialize_plus_minus_entry(path: &str, content: &str, md5: &str, was_truncated: bool, original_lines: usize, final_lines: usize) -> String {
+/// Serialize to Plus/Minus format (with Chronos metadata support)
+fn serialize_plus_minus_entry(path: &str, content: &str, md5: &str, size: u64, mtime: u64, was_truncated: bool, original_lines: usize, final_lines: usize, metadata_mode: MetadataMode) -> String {
+    use core::serialization::format_metadata_suffix;
     let mut output = String::new();
 
-    // Header: ++++++++++ filename [TRUNCATED: N lines] ++++++++++
+    // Get metadata suffix based on mode
+    let metadata_suffix = format_metadata_suffix(size, mtime, metadata_mode);
+
+    // Header: ++++++++++ filename [metadata] [TRUNCATED: N lines] ++++++++++
     if was_truncated {
-        output.push_str(&format!("++++++++++ {} [TRUNCATED: {} lines] ++++++++++\n", path, original_lines));
+        output.push_str(&format!("++++++++++ {}{} [TRUNCATED: {} lines] ++++++++++\n", path, metadata_suffix, original_lines));
     } else {
-        output.push_str(&format!("++++++++++ {} ++++++++++\n", path));
+        output.push_str(&format!("++++++++++ {}{} ++++++++++\n", path, metadata_suffix));
     }
 
     // Content
@@ -1728,20 +1751,24 @@ fn serialize_plus_minus_entry(path: &str, content: &str, md5: &str, was_truncate
     output
 }
 
-/// Serialize to XML format
-fn serialize_xml_entry(path: &str, content: &str, md5: &str, was_truncated: bool, original_lines: usize, final_lines: usize) -> String {
+/// Serialize to XML format (with Chronos metadata support)
+fn serialize_xml_entry(path: &str, content: &str, md5: &str, size: u64, mtime: u64, was_truncated: bool, original_lines: usize, final_lines: usize, metadata_mode: MetadataMode) -> String {
+    use core::serialization::format_xml_header_attrs;
     let mut output = String::new();
     let escaped_content = escape_xml(content);
 
+    // Get metadata attributes based on mode
+    let metadata_attrs = format_xml_header_attrs(size, mtime, metadata_mode);
+
     if was_truncated {
         output.push_str(&format!(
-            "<file path=\"{}\" md5=\"{}\" truncated=\"true\" original_lines=\"{}\" final_lines=\"{}\">\n",
-            escape_xml_attr(path), md5, original_lines, final_lines
+            "<file path=\"{}\" md5=\"{}\" truncated=\"true\" original_lines=\"{}\" final_lines=\"{}\"{}>\n",
+            escape_xml_attr(path), md5, original_lines, final_lines, metadata_attrs
         ));
     } else {
         output.push_str(&format!(
-            "<file path=\"{}\" md5=\"{}\">\n",
-            escape_xml_attr(path), md5
+            "<file path=\"{}\" md5=\"{}\"{}>\n",
+            escape_xml_attr(path), md5, metadata_attrs
         ));
     }
 
@@ -1755,19 +1782,23 @@ fn serialize_xml_entry(path: &str, content: &str, md5: &str, was_truncated: bool
     output
 }
 
-/// Serialize to Markdown format
-fn serialize_markdown_entry(path: &str, content: &str, md5: &str, was_truncated: bool, original_lines: usize, final_lines: usize) -> String {
+/// Serialize to Markdown format (with Chronos metadata support)
+fn serialize_markdown_entry(path: &str, content: &str, md5: &str, size: u64, mtime: u64, was_truncated: bool, original_lines: usize, final_lines: usize, metadata_mode: MetadataMode) -> String {
+    use core::serialization::format_metadata_suffix;
     let mut output = String::new();
     let lang = detect_language(path);
+
+    // Get metadata suffix based on mode
+    let metadata_suffix = format_metadata_suffix(size, mtime, metadata_mode);
 
     // Header
     if was_truncated {
         output.push_str(&format!(
-            "### {} [TRUNCATED: {} → {} lines]\n\n",
-            path, original_lines, final_lines
+            "### {}{} [TRUNCATED: {} → {} lines]\n\n",
+            path, metadata_suffix, original_lines, final_lines
         ));
     } else {
-        output.push_str(&format!("### {}\n\n", path));
+        output.push_str(&format!("### {}{}\n\n", path, metadata_suffix));
     }
 
     // Code block
@@ -1786,9 +1817,9 @@ fn serialize_markdown_entry(path: &str, content: &str, md5: &str, was_truncated:
     output
 }
 
-/// Serialize to Claude-optimized XML format
+/// Serialize to Claude-optimized XML format (with Chronos metadata support)
 /// Uses CDATA sections for code content with semantic attributes
-fn serialize_claude_xml_entry(path: &str, content: &str, md5: &str, was_truncated: bool, original_lines: usize, final_lines: usize) -> String {
+fn serialize_claude_xml_entry(path: &str, content: &str, md5: &str, size: u64, mtime: u64, was_truncated: bool, original_lines: usize, final_lines: usize, metadata_mode: MetadataMode) -> String {
     let mut output = String::new();
     let lang = detect_language(path);
 
@@ -1797,6 +1828,37 @@ fn serialize_claude_xml_entry(path: &str, content: &str, md5: &str, was_truncate
     output.push_str(&format!("  path=\"{}\"\n", escape_xml_attr(path)));
     output.push_str(&format!("  language=\"{}\"\n", lang));
     output.push_str(&format!("  md5=\"{}\"", md5));
+
+    // Add metadata based on mode
+    match metadata_mode {
+        MetadataMode::None => {}
+        MetadataMode::All => {
+            output.push_str(&format!("\n  size=\"{}\"", size));
+            output.push_str(&format!("\n  mtime=\"{}\"", mtime));
+        }
+        MetadataMode::SizeOnly => {
+            output.push_str(&format!("\n  size=\"{}\"", size));
+        }
+        MetadataMode::Auto => {
+            // Show size if > 10KB
+            if size > 10_000 {
+                output.push_str(&format!("\n  size=\"{}\"", size));
+            }
+            // Show time if recent (<30d) OR ancient (>5y)
+            if mtime > 0 {
+                let now = std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .unwrap_or(std::time::Duration::from_secs(0))
+                    .as_secs();
+                if mtime <= now {
+                    let age_days = (now - mtime) / 86400;
+                    if age_days < 30 || age_days > 5 * 365 {
+                        output.push_str(&format!("\n  mtime=\"{}\"", mtime));
+                    }
+                }
+            }
+        }
+    }
 
     if was_truncated {
         output.push_str("\n  truncated=\"true\"");
@@ -1927,11 +1989,12 @@ pub fn serialize_project_with_config(
     let mut output = String::new();
 
     for entry in sorted_entries {
-        output.push_str(&serialize_file_with_format(
+        output.push_str(&serialize_file_with_format_and_metadata(
             &entry,
             config.truncate_lines,
             &config.truncate_mode,
             config.output_format,
+            config.metadata_mode,
         ));
     }
 
@@ -2294,11 +2357,12 @@ pub fn serialize_project_streaming(
         config.include_patterns.clone(),
         config.max_file_size,
     ) {
-        let serialized = serialize_file_with_format(
+        let serialized = serialize_file_with_format_and_metadata(
             &entry,
             config.truncate_lines,
             &config.truncate_mode,
             config.output_format,
+            config.metadata_mode,
         );
         // Write immediately to stdout
         if handle.write_all(serialized.as_bytes()).is_err() {
@@ -2551,6 +2615,7 @@ impl Config {
             md5: "abc123".to_string(),
             mtime: 1234567890,
             ctime: 1234567890,
+            size: 14,
         };
 
         let serialized = serialize_file(&entry);
@@ -2619,6 +2684,7 @@ impl Config {
             active_lens: Some("architecture".to_string()),
             token_budget: Some(100_000),
             skeleton_mode: SkeletonMode::Auto,
+            metadata_mode: MetadataMode::Auto,
         };
 
         assert_eq!(config.truncate_lines, 500);
@@ -2678,6 +2744,7 @@ impl Config {
             md5: "d41d8cd98f00b204e9800998ecf8427e".to_string(),
             mtime: 1702000000,
             ctime: 1701000000,
+            size: 12,
         };
 
         assert_eq!(entry.path, "/path/to/file.rs");
@@ -3018,9 +3085,11 @@ if __name__ == "__main__":
 
     #[test]
     fn test_serialize_file_with_truncation_modes() {
+        let content = (0..100).map(|i| format!("line {}", i)).collect::<Vec<_>>().join("\n");
         let entry = FileEntry {
             path: "test.py".to_string(),
-            content: (0..100).map(|i| format!("line {}", i)).collect::<Vec<_>>().join("\n"),
+            size: content.len() as u64,
+            content,
             md5: "abc123".to_string(),
             mtime: 0,
             ctime: 0,
@@ -3277,6 +3346,7 @@ pub fn main() {
             md5: "abc".to_string(),
             mtime: 0,
             ctime: 0,
+            size: 12,
         };
 
         let output = serialize_file_with_truncation(&entry, 0, "simple");
@@ -3827,10 +3897,12 @@ This is the last section.
             md5: calculate_md5("print('hello')"),
             mtime: 12345,
             ctime: 12340,
+            size: 14,
         };
         assert_eq!(entry.path, "test.py");
         assert_eq!(entry.content, "print('hello')");
         assert!(!entry.md5.is_empty());
+        assert_eq!(entry.size, 14);
     }
 
     #[test]
