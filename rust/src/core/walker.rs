@@ -12,6 +12,21 @@ use std::time::SystemTime;
 #[cfg(test)]
 use mockall::automock;
 
+/// Normalize path separators for cross-platform compatibility.
+/// - Converts Windows backslashes to forward slashes
+/// - Strips Windows UNC prefix `\\?\` if present
+pub fn normalize_path_separators(path: &str) -> String {
+    let mut normalized = path.to_string();
+
+    // Strip Windows UNC prefix (\\?\ or \\.\)
+    if normalized.starts_with(r"\\?\") || normalized.starts_with(r"\\.\") {
+        normalized = normalized[4..].to_string();
+    }
+
+    // Convert backslashes to forward slashes
+    normalized.replace('\\', "/")
+}
+
 /// Trait for file system walking
 ///
 /// This trait allows for mocking in tests and alternative implementations
@@ -149,11 +164,12 @@ impl FileWalker for DefaultWalker {
             }
 
             let path = entry.path();
-            let relative_path = path
-                .strip_prefix(root)
-                .unwrap_or(path)
-                .to_string_lossy()
-                .to_string();
+            let relative_path = normalize_path_separators(
+                &path
+                    .strip_prefix(root)
+                    .unwrap_or(path)
+                    .to_string_lossy(),
+            );
 
             // Skip ignored files
             if self.should_ignore(&relative_path, &config.ignore_patterns) {
@@ -570,8 +586,11 @@ impl SmartWalker {
                 .unwrap_or((0, 0));
 
             file_entries.push(
-                FileEntry::new(entry.relative_path.to_string_lossy().into_owned(), content)
-                    .with_timestamps(mtime, ctime),
+                FileEntry::new(
+                    normalize_path_separators(&entry.relative_path.to_string_lossy()),
+                    content,
+                )
+                .with_timestamps(mtime, ctime),
             );
         }
 
@@ -607,6 +626,27 @@ mod tests {
     use super::*;
     use std::fs;
     use tempfile::TempDir;
+
+    #[test]
+    fn test_normalize_path_separators_backslashes() {
+        assert_eq!(normalize_path_separators(r"src\main.rs"), "src/main.rs");
+        assert_eq!(normalize_path_separators(r"a\b\c\d"), "a/b/c/d");
+    }
+
+    #[test]
+    fn test_normalize_path_separators_unc_prefix() {
+        assert_eq!(
+            normalize_path_separators(r"\\?\C:\project\src\main.rs"),
+            "C:/project/src/main.rs"
+        );
+        assert_eq!(normalize_path_separators(r"\\.\device"), "device");
+    }
+
+    #[test]
+    fn test_normalize_path_separators_unix_unchanged() {
+        assert_eq!(normalize_path_separators("src/main.rs"), "src/main.rs");
+        assert_eq!(normalize_path_separators("/home/user/file.txt"), "/home/user/file.txt");
+    }
 
     #[test]
     fn test_walk_config_default() {

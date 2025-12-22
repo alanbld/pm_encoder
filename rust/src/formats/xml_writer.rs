@@ -350,8 +350,26 @@ fn escape_xml_attr(s: &str) -> String {
         .replace('\'', "&apos;")
 }
 
+/// Normalize path for cross-platform compatibility (defense-in-depth).
+/// - Strips Windows UNC prefix `\\?\` if present
+/// - Converts backslashes to forward slashes
+fn normalize_path(path: &str) -> String {
+    let mut normalized = path.to_string();
+
+    // Strip Windows UNC prefix (\\?\ or \\.\)
+    if normalized.starts_with(r"\\?\") || normalized.starts_with(r"\\.\") {
+        normalized = normalized[4..].to_string();
+    }
+
+    // Convert backslashes to forward slashes
+    normalized.replace('\\', "/")
+}
+
 /// Sanitize file paths for privacy (remove absolute path prefixes)
 fn sanitize_path(path: &str) -> String {
+    // First normalize Windows paths
+    let path = normalize_path(path);
+
     // Remove common absolute path prefixes
     if path.starts_with('/') {
         // Unix absolute path - extract relative portion
@@ -366,7 +384,23 @@ fn sanitize_path(path: &str) -> String {
             return path[pos + 1..].to_string();
         }
     }
-    path.to_string()
+
+    // Handle Windows drive letters (C:/path/to/file)
+    if path.len() > 2 && path.chars().nth(1) == Some(':') && path.chars().nth(2) == Some('/') {
+        let without_drive = &path[3..];
+        if let Some(pos) = without_drive.rfind("/src/") {
+            return without_drive[pos + 1..].to_string();
+        }
+        if let Some(pos) = without_drive.rfind("/lib/") {
+            return without_drive[pos + 1..].to_string();
+        }
+        if let Some(pos) = without_drive.rfind('/') {
+            return without_drive[pos + 1..].to_string();
+        }
+        return without_drive.to_string();
+    }
+
+    path
 }
 
 #[cfg(test)]
@@ -409,6 +443,32 @@ mod tests {
     fn test_sanitize_path_relative() {
         assert_eq!(sanitize_path("src/main.rs"), "src/main.rs");
         assert_eq!(sanitize_path("file.txt"), "file.txt");
+    }
+
+    #[test]
+    fn test_normalize_path_windows_backslashes() {
+        assert_eq!(normalize_path(r"src\main.rs"), "src/main.rs");
+        assert_eq!(normalize_path(r"path\to\file.txt"), "path/to/file.txt");
+    }
+
+    #[test]
+    fn test_normalize_path_unc_prefix() {
+        assert_eq!(normalize_path(r"\\?\C:\project\src\main.rs"), "C:/project/src/main.rs");
+        assert_eq!(normalize_path(r"\\.\COM1"), "COM1");
+    }
+
+    #[test]
+    fn test_sanitize_path_windows_absolute() {
+        // Windows backslash paths get normalized and sanitized
+        assert_eq!(sanitize_path(r"C:\Users\dev\project\src\main.rs"), "src/main.rs");
+        assert_eq!(sanitize_path(r"D:\work\lib\data.json"), "lib/data.json");
+        assert_eq!(sanitize_path(r"E:\file.txt"), "file.txt");
+    }
+
+    #[test]
+    fn test_sanitize_path_windows_unc() {
+        // UNC prefix stripped and path sanitized
+        assert_eq!(sanitize_path(r"\\?\C:\project\src\main.rs"), "src/main.rs");
     }
 
     #[test]
