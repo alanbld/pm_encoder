@@ -217,15 +217,29 @@ impl IntentComposition {
         Self::new(
             ExplorationIntent::Onboarding,
             NoiseFilterParams {
-                filter_name_patterns: vec!["mock_".to_string()],
-                filter_concept_types: vec![],
-                min_relevance_threshold: 0.1,
+                filter_name_patterns: vec![
+                    "mock_".to_string(),
+                    "_mock".to_string(),
+                    "stub_".to_string(),
+                    "fake_".to_string(),
+                    "internal_".to_string(),
+                    "__".to_string(),  // Double underscore = private internals
+                ],
+                // For onboarding, we want to filter:
+                // - Tests (they're examples but can overwhelm)
+                // - Low-level infrastructure (too much detail)
+                // - Logging (not important for understanding)
+                filter_concept_types: vec![
+                    ConceptType::Testing,
+                    ConceptType::Logging,
+                ],
+                min_relevance_threshold: 0.25,  // Higher threshold for cleaner onboarding
             },
             RelevanceScorerParams::onboarding(),
             ExplorationPlannerParams {
-                max_elements: 20,
+                max_elements: 25,  // Slightly more elements for comprehensive onboarding
                 time_budget_minutes: 60,
-                min_relevance: 0.2,
+                min_relevance: 0.3,
                 group_related: true,
             },
         )

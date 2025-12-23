@@ -48,64 +48,250 @@ pub enum ConceptType {
 
 impl ConceptType {
     /// Infer concept type from layer content and name patterns
+    ///
+    /// Uses multiple signal types:
+    /// 1. Name patterns (strongest signal)
+    /// 2. Signature patterns (return type, parameters)
+    /// 3. Symbol kind (struct, trait, impl)
+    /// 4. Documentation keywords
+    /// 5. Content heuristics
     pub fn infer(layer: &ContextLayer) -> Self {
         let name = layer.name().to_lowercase();
 
-        // Name-based heuristics
-        if name.starts_with("test_") || name.ends_with("_test") || name.contains("_spec") {
+        // Extract signature and return type for richer heuristics
+        let (signature, return_type, kind, documentation) = match &layer.content {
+            LayerContent::Symbol { signature, return_type, kind, documentation, .. } => (
+                signature.to_lowercase(),
+                return_type.as_ref().map(|s| s.to_lowercase()),
+                Some(kind.clone()),
+                documentation.as_ref().map(|s| s.to_lowercase()),
+            ),
+            LayerContent::File { path, .. } => {
+                let path_str = path.to_string_lossy().to_lowercase();
+                // File-level classification
+                if path_str.contains("test") || path_str.contains("spec") {
+                    return ConceptType::Testing;
+                }
+                if path_str.contains("config") || path_str.contains("settings") {
+                    return ConceptType::Configuration;
+                }
+                return ConceptType::Unknown;
+            }
+            _ => (String::new(), None, None, None),
+        };
+
+        // =================================================================
+        // Priority 1: Test code (strongest signal - early return)
+        // =================================================================
+        if name.starts_with("test_") || name.ends_with("_test") || name.contains("_spec")
+            || name.contains("_tests") || signature.contains("#[test]")
+            || signature.contains("#[cfg(test)]")
+        {
             return ConceptType::Testing;
         }
-        if name.starts_with("log_") || name.contains("logger") || name.contains("_log") {
-            return ConceptType::Logging;
+
+        // =================================================================
+        // Priority 2: Error handling (signature-based - very reliable)
+        // =================================================================
+        if let Some(ref ret) = return_type {
+            if ret.contains("result<") || ret.contains("result ")
+                || ret.contains("error") || ret.contains("anyhow")
+            {
+                // Functions returning Result or Error types
+                if name.contains("handle") || name.contains("catch")
+                    || name.contains("recover") || name.contains("on_error")
+                {
+                    return ConceptType::ErrorHandling;
+                }
+            }
         }
-        if name.starts_with("config") || name.contains("_config") || name.contains("settings") {
-            return ConceptType::Configuration;
-        }
-        if name.contains("validate") || name.contains("check_") || name.contains("is_valid") {
-            return ConceptType::Validation;
-        }
-        if name.contains("calculate") || name.contains("compute") || name.contains("_total")
-            || name.contains("_sum") || name.contains("_avg")
-        {
-            return ConceptType::Calculation;
-        }
-        if name.contains("transform") || name.contains("convert") || name.contains("map_")
-            || name.contains("_to_")
-        {
-            return ConceptType::Transformation;
-        }
-        if name.contains("handle_error") || name.contains("on_error") || name.contains("_error")
-            || name.contains("recover")
+        // Error handler patterns
+        if name.contains("handle_error") || name.contains("on_error")
+            || name.contains("_error") || name.contains("recover")
+            || name.starts_with("err_") || name.ends_with("_err")
+            || signature.contains("-> result<") || signature.contains("-> anyhow")
         {
             return ConceptType::ErrorHandling;
         }
+
+        // =================================================================
+        // Priority 3: Validation (bool return + check/validate names)
+        // =================================================================
+        if let Some(ref ret) = return_type {
+            if ret == "bool" || ret.contains("bool") {
+                if name.contains("is_") || name.contains("has_") || name.contains("can_")
+                    || name.contains("check") || name.contains("valid")
+                    || name.contains("verify") || name.contains("assert")
+                {
+                    return ConceptType::Validation;
+                }
+            }
+        }
+        if name.contains("validate") || name.contains("check_") || name.contains("is_valid")
+            || name.starts_with("is_") || name.starts_with("has_")
+            || name.contains("verify") || name.contains("ensure")
+        {
+            return ConceptType::Validation;
+        }
+
+        // =================================================================
+        // Priority 4: Logging/Observability
+        // =================================================================
+        if name.starts_with("log_") || name.contains("logger") || name.contains("_log")
+            || name.contains("trace") || name.contains("debug_")
+            || name.contains("metric") || name.contains("telemetry")
+            || signature.contains("tracing::") || signature.contains("log::")
+        {
+            return ConceptType::Logging;
+        }
+
+        // =================================================================
+        // Priority 5: Configuration
+        // =================================================================
+        if name.starts_with("config") || name.contains("_config") || name.contains("settings")
+            || name.contains("options") || name.contains("params")
+            || name.contains("builder") || name.ends_with("_opts")
+        {
+            return ConceptType::Configuration;
+        }
+        // Struct/type names that suggest configuration
+        if let Some(SymbolKind::Struct) | Some(SymbolKind::Class) = kind {
+            if name.ends_with("config") || name.ends_with("options")
+                || name.ends_with("settings") || name.ends_with("params")
+                || name.ends_with("builder")
+            {
+                return ConceptType::Configuration;
+            }
+        }
+
+        // =================================================================
+        // Priority 6: Calculation/Computation
+        // =================================================================
+        if name.contains("calculate") || name.contains("compute") || name.contains("_total")
+            || name.contains("_sum") || name.contains("_avg") || name.contains("_count")
+            || name.contains("score") || name.contains("_price") || name.contains("_cost")
+            || name.contains("estimate") || name.contains("eval")
+        {
+            return ConceptType::Calculation;
+        }
+        // Numeric return types suggest calculation
+        if let Some(ref ret) = return_type {
+            if ret == "f32" || ret == "f64" || ret == "i32" || ret == "i64"
+                || ret == "u32" || ret == "u64" || ret == "usize"
+                || ret.contains("number") || ret.contains("amount")
+            {
+                // Only if name also suggests calculation
+                if name.contains("get_") || name.contains("calc") || name.contains("compute") {
+                    return ConceptType::Calculation;
+                }
+            }
+        }
+
+        // =================================================================
+        // Priority 7: Transformation/Conversion
+        // =================================================================
+        if name.contains("transform") || name.contains("convert") || name.contains("map_")
+            || name.contains("_to_") || name.contains("into_") || name.contains("from_")
+            || name.contains("parse") || name.contains("serialize") || name.contains("deserialize")
+            || name.contains("encode") || name.contains("decode")
+        {
+            return ConceptType::Transformation;
+        }
+        // From/Into trait implementations
+        if signature.contains("impl from<") || signature.contains("impl into<")
+            || signature.contains("impl tryfrom<") || signature.contains("impl tryinto<")
+        {
+            return ConceptType::Transformation;
+        }
+
+        // =================================================================
+        // Priority 8: Decision/Routing/Control flow
+        // =================================================================
         if name.contains("decide") || name.contains("route") || name.contains("dispatch")
-            || name.contains("should_")
+            || name.contains("should_") || name.contains("select")
+            || name.contains("choose") || name.contains("pick") || name.contains("match_")
+            || name.contains("filter") || name.contains("when_")
+        {
+            return ConceptType::Decision;
+        }
+        // Entry point patterns
+        if name == "main" || name == "run" || name == "start" || name == "execute"
+            || name == "process" || name.starts_with("handle_")
         {
             return ConceptType::Decision;
         }
 
-        // Content-based heuristics for symbols
-        if let LayerContent::Symbol { kind, documentation, .. } = &layer.content {
-            if let Some(doc) = documentation {
-                let doc_lower = doc.to_lowercase();
-                if doc_lower.contains("calculate") || doc_lower.contains("compute") {
-                    return ConceptType::Calculation;
-                }
-                if doc_lower.contains("validate") || doc_lower.contains("check") {
-                    return ConceptType::Validation;
-                }
-            }
+        // =================================================================
+        // Priority 9: Infrastructure
+        // =================================================================
+        if name.contains("connect") || name.contains("socket") || name.contains("http")
+            || name.contains("network") || name.contains("database") || name.contains("db_")
+            || name.contains("file_") || name.contains("fs_") || name.contains("io_")
+            || name.contains("read_file") || name.contains("write_file")
+            || name.contains("send_") || name.contains("recv_") || name.contains("fetch")
+        {
+            return ConceptType::Infrastructure;
+        }
 
-            // Method kind hints
-            match kind {
-                SymbolKind::Function | SymbolKind::Method => {
-                    // Default to unknown for functions without clear signals
-                }
+        // =================================================================
+        // Documentation-based inference (fallback)
+        // =================================================================
+        if let Some(ref doc) = documentation {
+            if doc.contains("calculate") || doc.contains("compute") || doc.contains("score") {
+                return ConceptType::Calculation;
+            }
+            if doc.contains("validate") || doc.contains("check") || doc.contains("verify") {
+                return ConceptType::Validation;
+            }
+            if doc.contains("transform") || doc.contains("convert") || doc.contains("parse") {
+                return ConceptType::Transformation;
+            }
+            if doc.contains("error") || doc.contains("handle") || doc.contains("recover") {
+                return ConceptType::ErrorHandling;
+            }
+            if doc.contains("config") || doc.contains("setting") || doc.contains("option") {
+                return ConceptType::Configuration;
+            }
+            if doc.contains("entry point") || doc.contains("main") || doc.contains("start") {
+                return ConceptType::Decision;
+            }
+        }
+
+        // =================================================================
+        // Symbol kind fallback (for unclassified symbols)
+        // =================================================================
+        // Check visibility from the layer content
+        let is_public = matches!(&layer.content,
+            LayerContent::Symbol { visibility, .. } if *visibility == crate::core::fractal::Visibility::Public
+        ) || signature.contains("pub ");
+
+        if let Some(ref k) = kind {
+            match k {
                 SymbolKind::Struct | SymbolKind::Class => {
-                    if name.contains("config") || name.contains("options") {
-                        return ConceptType::Configuration;
+                    // Data structures without clear purpose - likely domain models
+                    // which are part of business logic/transformation
+                    return ConceptType::Transformation;
+                }
+                SymbolKind::Trait | SymbolKind::Interface => {
+                    // Traits define contracts - usually decision/routing related
+                    return ConceptType::Decision;
+                }
+                SymbolKind::Constant => {
+                    return ConceptType::Configuration;
+                }
+                SymbolKind::Enum => {
+                    // Enums are usually for decision/state
+                    return ConceptType::Decision;
+                }
+                SymbolKind::Function | SymbolKind::Method => {
+                    // Functions/methods that don't match other patterns
+                    // Check if public (likely API) vs private (helper)
+                    if is_public {
+                        // Public functions without clear category - likely core logic
+                        return ConceptType::Calculation;
                     }
+                    // Private helpers - infrastructure/utility
+                    return ConceptType::Infrastructure;
                 }
                 _ => {}
             }
@@ -428,6 +614,13 @@ pub struct RelevanceScorer;
 
 impl RelevanceScorer {
     /// Score a single element (public for composition use)
+    ///
+    /// Scoring factors:
+    /// 1. Concept type weight (primary factor)
+    /// 2. Documentation boost
+    /// 3. Visibility boost (public API vs internal)
+    /// 4. Complexity factor (sweet spot for readability)
+    /// 5. Name clarity bonus
     pub fn score_element(
         &self,
         layer: &ContextLayer,
@@ -435,39 +628,80 @@ impl RelevanceScorer {
         concept_type: ConceptType,
         params: &RelevanceScorerParams,
     ) -> RelevanceScore {
-        let mut score = 0.5f32;
+        let mut score = 0.0f32;
         let mut factors = Vec::new();
 
-        // Concept type weight
+        // Factor 1: Concept type weight (0.0 - 1.0, primary factor)
         let concept_weight = params
             .concept_weights
             .iter()
             .find(|(ct, _)| *ct == concept_type)
             .map(|(_, w)| *w)
-            .unwrap_or(0.5);
+            .unwrap_or(0.3);  // Lower default for unconfigured types
 
         factors.push(("concept_type".to_string(), concept_weight));
-        score = concept_weight;
+        score += concept_weight * 0.6;  // 60% of score from concept type
 
-        // Documentation boost
-        if let LayerContent::Symbol { documentation: Some(_), .. } = &layer.content {
-            score += params.documentation_boost;
-            factors.push(("has_documentation".to_string(), params.documentation_boost));
+        // Factor 2: Documentation boost
+        if let LayerContent::Symbol { documentation: Some(doc), .. } = &layer.content {
+            let doc_boost = if doc.len() > 50 {
+                params.documentation_boost  // Full boost for substantial docs
+            } else {
+                params.documentation_boost * 0.5  // Half boost for brief docs
+            };
+            score += doc_boost;
+            factors.push(("has_documentation".to_string(), doc_boost));
         }
 
-        // Visibility boost
+        // Factor 3: Visibility boost (public APIs are more important for understanding)
         if let LayerContent::Symbol { visibility, .. } = &layer.content {
             if *visibility == crate::core::fractal::Visibility::Public {
                 score += params.public_visibility_boost;
                 factors.push(("public_visibility".to_string(), params.public_visibility_boost));
+            } else {
+                // Small penalty for private/internal
+                score -= 0.05;
+                factors.push(("private_visibility".to_string(), -0.05));
             }
+        }
+
+        // Factor 4: Complexity factor - prefer medium complexity (not too simple, not too complex)
+        if let LayerContent::Symbol { range, .. } = &layer.content {
+            let lines = range.end_line.saturating_sub(range.start_line) + 1;
+            let complexity_factor = if lines < 5 {
+                -0.1  // Too simple, probably trivial
+            } else if lines <= 30 {
+                0.1  // Sweet spot - readable functions
+            } else if lines <= 100 {
+                0.0  // Medium complexity - neutral
+            } else {
+                -0.1  // Too complex, hard to understand quickly
+            };
+            score += complexity_factor;
+            factors.push(("complexity".to_string(), complexity_factor));
+        }
+
+        // Factor 5: Name clarity bonus - descriptive names are more understandable
+        let name = layer.name();
+        let name_clarity = if name.len() >= 4 && name.len() <= 30 {
+            // Good length for descriptive name
+            let has_separator = name.contains('_') || name.chars().any(|c| c.is_uppercase());
+            if has_separator { 0.05 } else { 0.0 }
+        } else if name.len() < 4 {
+            -0.05  // Too short, probably cryptic
+        } else {
+            0.0  // Long names - neutral
+        };
+        if name_clarity != 0.0 {
+            score += name_clarity;
+            factors.push(("name_clarity".to_string(), name_clarity));
         }
 
         score = score.clamp(0.0, 1.0);
 
         RelevanceScore {
             score,
-            explanation: format!("{:?} element", concept_type),
+            explanation: format!("{:?} element ({})", concept_type, layer.name()),
             factors,
         }
     }
@@ -667,46 +901,108 @@ mod tests {
     use super::*;
     use crate::core::fractal::Range;
 
+    fn make_symbol_layer(id: &str, name: &str, kind: SymbolKind, signature: &str, return_type: Option<&str>, is_public: bool) -> ContextLayer {
+        ContextLayer::new(id, LayerContent::Symbol {
+            name: name.to_string(),
+            kind,
+            signature: signature.to_string(),
+            return_type: return_type.map(String::from),
+            parameters: vec![],
+            documentation: None,
+            visibility: if is_public { crate::core::fractal::Visibility::Public } else { crate::core::fractal::Visibility::Private },
+            range: Range::line_range(1, 20),
+        })
+    }
+
     #[test]
     fn test_concept_type_inference_from_name() {
         // Test function
-        let test_layer = ContextLayer::new("t1", LayerContent::Symbol {
-            name: "test_calculate_total".to_string(),
-            kind: SymbolKind::Function,
-            signature: "fn test_calculate_total()".to_string(),
-            return_type: None,
-            parameters: vec![],
-            documentation: None,
-            visibility: crate::core::fractal::Visibility::Private,
-            range: Range::line_range(1, 10),
-        });
+        let test_layer = make_symbol_layer("t1", "test_calculate_total", SymbolKind::Function, "fn test_calculate_total()", None, false);
         assert_eq!(ConceptType::infer(&test_layer), ConceptType::Testing);
 
         // Calculate function
-        let calc_layer = ContextLayer::new("c1", LayerContent::Symbol {
-            name: "calculate_total".to_string(),
-            kind: SymbolKind::Function,
-            signature: "fn calculate_total() -> f64".to_string(),
-            return_type: Some("f64".to_string()),
-            parameters: vec![],
-            documentation: None,
-            visibility: crate::core::fractal::Visibility::Public,
-            range: Range::line_range(1, 10),
-        });
+        let calc_layer = make_symbol_layer("c1", "calculate_total", SymbolKind::Function, "pub fn calculate_total() -> f64", Some("f64"), true);
         assert_eq!(ConceptType::infer(&calc_layer), ConceptType::Calculation);
 
         // Validate function
-        let validate_layer = ContextLayer::new("v1", LayerContent::Symbol {
-            name: "validate_input".to_string(),
-            kind: SymbolKind::Function,
-            signature: "fn validate_input() -> bool".to_string(),
-            return_type: Some("bool".to_string()),
-            parameters: vec![],
-            documentation: None,
-            visibility: crate::core::fractal::Visibility::Public,
-            range: Range::line_range(1, 10),
-        });
+        let validate_layer = make_symbol_layer("v1", "validate_input", SymbolKind::Function, "pub fn validate_input() -> bool", Some("bool"), true);
         assert_eq!(ConceptType::infer(&validate_layer), ConceptType::Validation);
+    }
+
+    #[test]
+    fn test_concept_type_inference_expanded() {
+        // Error handling - from name
+        let error_layer = make_symbol_layer("e1", "handle_error", SymbolKind::Function, "pub fn handle_error()", None, true);
+        assert_eq!(ConceptType::infer(&error_layer), ConceptType::ErrorHandling);
+
+        // Error handling - from signature returning Result
+        let result_layer = make_symbol_layer("e2", "process_data", SymbolKind::Function, "pub fn process_data() -> Result<T>", Some("Result<T>"), true);
+        // Signature with "-> Result<" triggers ErrorHandling classification
+        assert_eq!(ConceptType::infer(&result_layer), ConceptType::ErrorHandling);
+
+        // Configuration - struct name
+        let config_layer = make_symbol_layer("cfg1", "ExplorerConfig", SymbolKind::Struct, "pub struct ExplorerConfig", None, true);
+        assert_eq!(ConceptType::infer(&config_layer), ConceptType::Configuration);
+
+        // Configuration - from name pattern
+        let settings_layer = make_symbol_layer("cfg2", "load_settings", SymbolKind::Function, "pub fn load_settings()", None, true);
+        assert_eq!(ConceptType::infer(&settings_layer), ConceptType::Configuration);
+
+        // Transformation - from name
+        let transform_layer = make_symbol_layer("tr1", "transform_to_json", SymbolKind::Function, "pub fn transform_to_json()", None, true);
+        assert_eq!(ConceptType::infer(&transform_layer), ConceptType::Transformation);
+
+        // Transformation - parse function (note: "parse_config" has "config" which takes priority)
+        let parse_layer = make_symbol_layer("tr2", "parse_data", SymbolKind::Function, "pub fn parse_data()", None, true);
+        assert_eq!(ConceptType::infer(&parse_layer), ConceptType::Transformation);
+
+        // Decision - entry point
+        let main_layer = make_symbol_layer("d1", "main", SymbolKind::Function, "fn main()", None, false);
+        assert_eq!(ConceptType::infer(&main_layer), ConceptType::Decision);
+
+        // Decision - execute/process
+        let exec_layer = make_symbol_layer("d2", "execute", SymbolKind::Function, "pub fn execute()", None, true);
+        assert_eq!(ConceptType::infer(&exec_layer), ConceptType::Decision);
+
+        // Infrastructure
+        let infra_layer = make_symbol_layer("i1", "connect_database", SymbolKind::Function, "pub fn connect_database()", None, true);
+        assert_eq!(ConceptType::infer(&infra_layer), ConceptType::Infrastructure);
+
+        // Logging
+        let log_layer = make_symbol_layer("l1", "log_event", SymbolKind::Function, "fn log_event()", None, false);
+        assert_eq!(ConceptType::infer(&log_layer), ConceptType::Logging);
+
+        // Validation - is_ pattern
+        let is_layer = make_symbol_layer("v2", "is_valid", SymbolKind::Function, "fn is_valid() -> bool", Some("bool"), false);
+        assert_eq!(ConceptType::infer(&is_layer), ConceptType::Validation);
+    }
+
+    #[test]
+    fn test_concept_type_fallback_by_symbol_kind() {
+        // Struct without clear pattern should fallback to Transformation (domain model)
+        let struct_layer = make_symbol_layer("s1", "UserAccount", SymbolKind::Struct, "pub struct UserAccount", None, true);
+        assert_eq!(ConceptType::infer(&struct_layer), ConceptType::Transformation);
+
+        // Enum should fallback to Decision (state)
+        let enum_layer = make_symbol_layer("en1", "Status", SymbolKind::Enum, "pub enum Status", None, true);
+        assert_eq!(ConceptType::infer(&enum_layer), ConceptType::Decision);
+
+        // Trait should fallback to Decision (contract)
+        let trait_layer = make_symbol_layer("tr1", "Processor", SymbolKind::Trait, "pub trait Processor", None, true);
+        assert_eq!(ConceptType::infer(&trait_layer), ConceptType::Decision);
+
+        // Constant should fallback to Configuration
+        let const_layer = make_symbol_layer("c1", "MAX_SIZE", SymbolKind::Constant, "pub const MAX_SIZE: usize = 100", None, true);
+        assert_eq!(ConceptType::infer(&const_layer), ConceptType::Configuration);
+
+        // Private function without clear pattern - Infrastructure
+        let helper_layer = make_symbol_layer("h1", "do_work", SymbolKind::Function, "fn do_work()", None, false);
+        assert_eq!(ConceptType::infer(&helper_layer), ConceptType::Infrastructure);
+
+        // Public function without clear pattern - Calculation (core logic fallback)
+        // Note: "process_item" doesn't match the exact "process" entry point pattern
+        let pub_layer = make_symbol_layer("p1", "process_item", SymbolKind::Function, "pub fn process_item()", None, true);
+        assert_eq!(ConceptType::infer(&pub_layer), ConceptType::Calculation);
     }
 
     #[test]
@@ -732,6 +1028,50 @@ mod tests {
             .map(|(_, w)| *w);
 
         assert!(calc_weight > test_weight, "Business logic should weight calculations higher than tests");
+    }
+
+    #[test]
+    fn test_relevance_scorer_produces_varied_scores() {
+        use crate::core::fractal::SymbolVectorizer;
+
+        let scorer = RelevanceScorer;
+        let params = RelevanceScorerParams::onboarding();
+        let vectorizer = SymbolVectorizer::new();
+
+        // High-relevance: public, documented, Decision type
+        let high_layer = ContextLayer::new("h1", LayerContent::Symbol {
+            name: "execute".to_string(),
+            kind: SymbolKind::Function,
+            signature: "pub fn execute()".to_string(),
+            return_type: None,
+            parameters: vec![],
+            documentation: Some("Main entry point for executing the workflow. This is a long doc.".to_string()),
+            visibility: crate::core::fractal::Visibility::Public,
+            range: Range::line_range(1, 25), // Sweet spot complexity
+        });
+        let high_vector = vectorizer.vectorize_layer(&high_layer);
+        let high_score = scorer.score_element(&high_layer, &high_vector, ConceptType::Decision, &params);
+
+        // Low-relevance: private, no docs, Testing type
+        let low_layer = ContextLayer::new("l1", LayerContent::Symbol {
+            name: "test_internal".to_string(),
+            kind: SymbolKind::Function,
+            signature: "fn test_internal()".to_string(),
+            return_type: None,
+            parameters: vec![],
+            documentation: None,
+            visibility: crate::core::fractal::Visibility::Private,
+            range: Range::line_range(1, 3), // Too simple
+        });
+        let low_vector = vectorizer.vectorize_layer(&low_layer);
+        let low_score = scorer.score_element(&low_layer, &low_vector, ConceptType::Testing, &params);
+
+        // Assert meaningful difference
+        assert!(high_score.score > low_score.score,
+            "High-relevance element ({}) should score higher than low-relevance element ({})",
+            high_score.score, low_score.score);
+        assert!(high_score.score >= 0.5, "High-relevance should be at least 0.5, got {}", high_score.score);
+        assert!(low_score.score <= 0.3, "Low-relevance should be at most 0.3, got {}", low_score.score);
     }
 
     #[test]
