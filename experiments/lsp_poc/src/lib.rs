@@ -8,7 +8,9 @@
 //! - `protocol`: JSON-RPC 2.0 message types
 //! - `metrics`: Latency and accuracy measurement infrastructure
 //! - `comparison`: Regex vs LSP symbol extraction comparison
+//! - `client`: Production-ready LSP client for rust-analyzer
 
 pub mod protocol;
 pub mod metrics;
 pub mod comparison;
+pub mod client;
