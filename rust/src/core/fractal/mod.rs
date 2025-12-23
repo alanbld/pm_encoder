@@ -44,6 +44,7 @@ pub mod context;
 pub mod builder;
 pub mod navigation;
 pub mod relationships;
+pub mod clustering;
 
 // Re-export commonly used types
 pub use layers::{
@@ -75,8 +76,6 @@ pub use context::{
     GraphEdge,
     NodeType,
     RelationshipType,
-    // Clustering
-    SemanticCluster,
     // Metadata
     ExtractionMetadata,
 };
@@ -121,6 +120,32 @@ pub use relationships::{
     CallExtractor,
     ExtractedCalls,
     FileCallExtraction,
+};
+
+pub use clustering::{
+    // Cluster Engine
+    ClusterEngine,
+    ClusterConfig,
+    ClusterAlgorithm,
+    // Semantic Cluster
+    SemanticCluster,
+    ClusterMember,
+    ClusterMetrics,
+    ClusterPattern,
+    // Vectorizer
+    SymbolVectorizer,
+    FeatureVector,
+    FeatureType,
+    VectorizerConfig,
+    // Algorithms
+    KMeans,
+    DBSCAN,
+    ClusterResult,
+    ClusteringError,
+    // Shell Patterns
+    ShellPatternRecognizer,
+    ShellPattern,
+    ShellPatternType,
 };
 
 #[cfg(test)]
