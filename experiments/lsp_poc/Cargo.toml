@@ -1,0 +1,22 @@
+[package]
+name = "lsp-poc"
+version = "0.1.0"
+edition = "2021"
+description = "LSP Protocol Proof of Concept - Semantic Bridge Experiment"
+
+[[bin]]
+name = "mock_lsp"
+path = "src/bin/mock_lsp.rs"
+
+[dependencies]
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+tokio = { version = "1.0", features = ["full"] }
+thiserror = "1.0"
+bytes = "1.5"
+
+[dev-dependencies]
+assert_cmd = "2.0"
+predicates = "3.0"
+tempfile = "3.10"
+criterion = "0.5"
