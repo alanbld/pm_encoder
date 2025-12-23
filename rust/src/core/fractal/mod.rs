@@ -43,6 +43,7 @@ pub mod layers;
 pub mod context;
 pub mod builder;
 pub mod navigation;
+pub mod relationships;
 
 // Re-export commonly used types
 pub use layers::{
@@ -106,6 +107,20 @@ pub use navigation::{
     NavigationStats,
     SiblingDirection,
     PanDirection,
+};
+
+pub use relationships::{
+    // Call Graph
+    CallGraph,
+    CallGraphMetadata,
+    CallNode,
+    CallEdge,
+    CallKind,
+    CallableKind,
+    // Extractor
+    CallExtractor,
+    ExtractedCalls,
+    FileCallExtraction,
 };
 
 #[cfg(test)]

@@ -9,6 +9,7 @@ use std::path::PathBuf;
 use std::time::Duration;
 
 use super::layers::{ContextLayer, ZoomLevel, Range};
+use super::relationships::CallGraph;
 
 /// The main fractal context structure - hierarchical, zoomable.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -28,6 +29,9 @@ pub struct FractalContext {
     pub semantic_clusters: Vec<SemanticCluster>,
     /// Metadata about extraction
     pub metadata: ExtractionMetadata,
+    /// Advanced call graph (petgraph-based) for graph algorithms
+    #[serde(default)]
+    pub call_graph: Option<CallGraph>,
 }
 
 impl FractalContext {
@@ -52,6 +56,7 @@ impl FractalContext {
             relationships: RelationshipGraph::default(),
             semantic_clusters: Vec::new(),
             metadata: ExtractionMetadata::default(),
+            call_graph: None,
         }
     }
 
@@ -186,6 +191,30 @@ impl FractalContext {
             name: layer.name().to_string(),
             children,
         }
+    }
+
+    // -------------------------------------------------------------------------
+    // Call Graph Methods
+    // -------------------------------------------------------------------------
+
+    /// Set the call graph for this context.
+    pub fn set_call_graph(&mut self, call_graph: CallGraph) {
+        self.call_graph = Some(call_graph);
+    }
+
+    /// Get a reference to the call graph.
+    pub fn get_call_graph(&self) -> Option<&CallGraph> {
+        self.call_graph.as_ref()
+    }
+
+    /// Get a mutable reference to the call graph.
+    pub fn get_call_graph_mut(&mut self) -> Option<&mut CallGraph> {
+        self.call_graph.as_mut()
+    }
+
+    /// Check if the context has a call graph.
+    pub fn has_call_graph(&self) -> bool {
+        self.call_graph.is_some()
     }
 }
 
