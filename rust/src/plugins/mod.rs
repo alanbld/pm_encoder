@@ -8,7 +8,8 @@
 //!
 //! - **Shell** (bash, sh, zsh, ksh) - Shell script analysis
 //! - **ABL** (OpenEdge Progress 4GL) - Business application language
-//! - More plugins to come: Python, TypeScript, etc.
+//! - **Python** - Python source analysis with decorator recognition
+//! - More plugins to come: TypeScript, etc.
 //!
 //! # Plugin Architecture
 //!
@@ -28,6 +29,7 @@
 
 pub mod shell;
 pub mod abl;
+pub mod python;
 
 use std::path::Path;
 
@@ -199,6 +201,7 @@ impl PluginRegistry {
         let mut registry = Self::new();
         registry.register(Box::new(shell::ShellPlugin::new()));
         registry.register(Box::new(abl::AblPlugin::new()));
+        registry.register(Box::new(python::PythonPlugin::new()));
         registry
     }
 
@@ -282,5 +285,25 @@ mod tests {
 
         let plugin = registry.find_for_file(Path::new("file.xyz"));
         assert!(plugin.is_none());
+    }
+
+    #[test]
+    fn test_find_plugin_for_python() {
+        let registry = PluginRegistry::with_defaults();
+
+        let plugin = registry.find_for_file(Path::new("main.py"));
+        assert!(plugin.is_some());
+        assert_eq!(plugin.unwrap().language_name(), "python");
+    }
+
+    #[test]
+    fn test_find_python_by_language() {
+        let registry = PluginRegistry::with_defaults();
+
+        let plugin = registry.find_by_language("python");
+        assert!(plugin.is_some());
+
+        let plugin = registry.find_by_language("PYTHON");
+        assert!(plugin.is_some());
     }
 }
