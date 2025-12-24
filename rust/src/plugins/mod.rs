@@ -9,7 +9,7 @@
 //! - **Shell** (bash, sh, zsh, ksh) - Shell script analysis
 //! - **ABL** (OpenEdge Progress 4GL) - Business application language
 //! - **Python** - Python source analysis with decorator recognition
-//! - More plugins to come: TypeScript, etc.
+//! - **TypeScript** - TypeScript/JavaScript with type-aware semantic mapping
 //!
 //! # Plugin Architecture
 //!
@@ -30,6 +30,7 @@
 pub mod shell;
 pub mod abl;
 pub mod python;
+pub mod typescript;
 
 use std::path::Path;
 
@@ -202,6 +203,7 @@ impl PluginRegistry {
         registry.register(Box::new(shell::ShellPlugin::new()));
         registry.register(Box::new(abl::AblPlugin::new()));
         registry.register(Box::new(python::PythonPlugin::new()));
+        registry.register(Box::new(typescript::TypeScriptPlugin::new()));
         registry
     }
 
@@ -304,6 +306,34 @@ mod tests {
         assert!(plugin.is_some());
 
         let plugin = registry.find_by_language("PYTHON");
+        assert!(plugin.is_some());
+    }
+
+    #[test]
+    fn test_find_plugin_for_typescript() {
+        let registry = PluginRegistry::with_defaults();
+
+        let plugin = registry.find_for_file(Path::new("app.ts"));
+        assert!(plugin.is_some());
+        assert_eq!(plugin.unwrap().language_name(), "typescript");
+
+        let plugin = registry.find_for_file(Path::new("component.tsx"));
+        assert!(plugin.is_some());
+        assert_eq!(plugin.unwrap().language_name(), "typescript");
+
+        let plugin = registry.find_for_file(Path::new("script.js"));
+        assert!(plugin.is_some());
+        assert_eq!(plugin.unwrap().language_name(), "typescript");
+    }
+
+    #[test]
+    fn test_find_typescript_by_language() {
+        let registry = PluginRegistry::with_defaults();
+
+        let plugin = registry.find_by_language("typescript");
+        assert!(plugin.is_some());
+
+        let plugin = registry.find_by_language("TYPESCRIPT");
         assert!(plugin.is_some());
     }
 }
