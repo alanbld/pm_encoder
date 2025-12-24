@@ -1,0 +1,263 @@
+# Voyager Observatory - Release Pipeline
+#
+# Triggered on version tags (e.g., v2.1.0)
+# Runs the full test suite, builds cross-platform binaries,
+# compiles the WASM kernel, and drafts a GitHub Release.
+#
+# "The Voyager is ready to serve the fleet."
+
+name: Voyager Release
+
+on:
+  push:
+    tags:
+      - 'v*.*.*'
+
+env:
+  CARGO_TERM_COLOR: always
+  RUST_BACKTRACE: 1
+
+jobs:
+  # ============================================================
+  # Stage 1: Test Suite Verification
+  # ============================================================
+  test:
+    name: "Test Suite"
+    runs-on: ubuntu-latest
+    steps:
+      - name: "Checkout Voyager Observatory"
+        uses: actions/checkout@v4
+
+      - name: "Install Rust Toolchain"
+        uses: dtolnay/rust-action@stable
+        with:
+          components: clippy, rustfmt
+
+      - name: "Cache Cargo Registry"
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            rust/target
+          key: ${{ runner.os }}-cargo-${{ hashFiles('rust/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-
+
+      - name: "Run Clippy Lints"
+        working-directory: rust
+        run: cargo clippy --all-targets --all-features -- -D warnings
+
+      - name: "Run Test Suite"
+        working-directory: rust
+        run: cargo test --release --all-features
+
+      - name: "Verify vo Binary Builds"
+        working-directory: rust
+        run: |
+          cargo build --release
+          ./target/release/vo --version
+
+  # ============================================================
+  # Stage 2: Cross-Platform Binary Builds
+  # ============================================================
+  build-binaries:
+    name: "Build ${{ matrix.target }}"
+    needs: test
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # Linux (x86_64)
+          - os: ubuntu-latest
+            target: x86_64-unknown-linux-gnu
+            artifact_name: vo
+            asset_name: vo-linux-x86_64
+
+          # macOS (x86_64)
+          - os: macos-latest
+            target: x86_64-apple-darwin
+            artifact_name: vo
+            asset_name: vo-macos-x86_64
+
+          # macOS (Apple Silicon)
+          - os: macos-latest
+            target: aarch64-apple-darwin
+            artifact_name: vo
+            asset_name: vo-macos-aarch64
+
+          # Windows (x86_64)
+          - os: windows-latest
+            target: x86_64-pc-windows-msvc
+            artifact_name: vo.exe
+            asset_name: vo-windows-x86_64.exe
+
+    steps:
+      - name: "Checkout Voyager Observatory"
+        uses: actions/checkout@v4
+
+      - name: "Install Rust Toolchain"
+        uses: dtolnay/rust-action@stable
+        with:
+          targets: ${{ matrix.target }}
+
+      - name: "Cache Cargo Registry"
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            rust/target
+          key: ${{ runner.os }}-${{ matrix.target }}-cargo-${{ hashFiles('rust/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-${{ matrix.target }}-cargo-
+
+      - name: "Build Release Binary"
+        working-directory: rust
+        run: cargo build --release --target ${{ matrix.target }}
+
+      - name: "Upload Binary Artifact"
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.asset_name }}
+          path: rust/target/${{ matrix.target }}/release/${{ matrix.artifact_name }}
+
+  # ============================================================
+  # Stage 3: WASM Kernel Compilation
+  # ============================================================
+  build-wasm:
+    name: "Build WASM Kernel"
+    needs: test
+    runs-on: ubuntu-latest
+    steps:
+      - name: "Checkout Voyager Observatory"
+        uses: actions/checkout@v4
+
+      - name: "Install Rust Toolchain"
+        uses: dtolnay/rust-action@stable
+        with:
+          targets: wasm32-unknown-unknown
+
+      - name: "Install wasm-pack"
+        run: cargo install wasm-pack
+
+      - name: "Cache Cargo Registry"
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            rust/target
+          key: ${{ runner.os }}-wasm-cargo-${{ hashFiles('rust/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-wasm-cargo-
+
+      - name: "Build WASM Package (Node.js target)"
+        working-directory: rust
+        run: wasm-pack build --target nodejs --features wasm
+
+      - name: "Package WASM Kernel"
+        run: |
+          cd rust/pkg
+          tar -czvf ../../voyager-wasm-nodejs.tar.gz .
+
+      - name: "Upload WASM Artifact"
+        uses: actions/upload-artifact@v4
+        with:
+          name: voyager-wasm-nodejs
+          path: voyager-wasm-nodejs.tar.gz
+
+  # ============================================================
+  # Stage 4: GitHub Release
+  # ============================================================
+  release:
+    name: "Draft GitHub Release"
+    needs: [build-binaries, build-wasm]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: "Checkout Voyager Observatory"
+        uses: actions/checkout@v4
+
+      - name: "Download All Artifacts"
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+
+      - name: "Prepare Release Assets"
+        run: |
+          mkdir -p release-assets
+
+          # Linux binary
+          cp artifacts/vo-linux-x86_64/vo release-assets/vo-linux-x86_64
+          chmod +x release-assets/vo-linux-x86_64
+
+          # macOS binaries
+          cp artifacts/vo-macos-x86_64/vo release-assets/vo-macos-x86_64
+          chmod +x release-assets/vo-macos-x86_64
+          cp artifacts/vo-macos-aarch64/vo release-assets/vo-macos-aarch64
+          chmod +x release-assets/vo-macos-aarch64
+
+          # Windows binary
+          cp artifacts/vo-windows-x86_64.exe/vo.exe release-assets/vo-windows-x86_64.exe
+
+          # WASM package
+          cp artifacts/voyager-wasm-nodejs/voyager-wasm-nodejs.tar.gz release-assets/
+
+          # Create checksums
+          cd release-assets
+          sha256sum * > SHA256SUMS.txt
+
+      - name: "Extract Version from Tag"
+        id: version
+        run: echo "version=${GITHUB_REF#refs/tags/}" >> $GITHUB_OUTPUT
+
+      - name: "Create GitHub Release"
+        uses: softprops/action-gh-release@v1
+        with:
+          name: "Voyager Observatory ${{ steps.version.outputs.version }}"
+          body: |
+            ## Voyager Observatory ${{ steps.version.outputs.version }}
+
+            ### Downloads
+
+            | Platform | Binary |
+            |----------|--------|
+            | Linux (x86_64) | `vo-linux-x86_64` |
+            | macOS (Intel) | `vo-macos-x86_64` |
+            | macOS (Apple Silicon) | `vo-macos-aarch64` |
+            | Windows (x86_64) | `vo-windows-x86_64.exe` |
+
+            ### WASM Package
+
+            The `voyager-wasm-nodejs.tar.gz` contains the WASM kernel for Node.js integration.
+
+            ```bash
+            # Extract and use in your project
+            tar -xzvf voyager-wasm-nodejs.tar.gz
+            ```
+
+            ### Installation
+
+            ```bash
+            # Linux/macOS
+            chmod +x vo-*
+            sudo mv vo-linux-x86_64 /usr/local/bin/vo
+
+            # Verify
+            vo --version
+            ```
+
+            ---
+
+            *"The Voyager is ready to serve the fleet."*
+          draft: true
+          files: |
+            release-assets/vo-linux-x86_64
+            release-assets/vo-macos-x86_64
+            release-assets/vo-macos-aarch64
+            release-assets/vo-windows-x86_64.exe
+            release-assets/voyager-wasm-nodejs.tar.gz
+            release-assets/SHA256SUMS.txt

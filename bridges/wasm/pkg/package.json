@@ -1,8 +1,7 @@
 {
   "name": "pm_encoder",
-  "type": "module",
   "description": "High-performance context serializer (Rust Engine)",
-  "version": "0.9.0",
+  "version": "1.0.0",
   "license": "MIT",
   "repository": {
     "type": "git",
@@ -15,9 +14,6 @@
   ],
   "main": "pm_encoder.js",
   "types": "pm_encoder.d.ts",
-  "sideEffects": [
-    "./snippets/*"
-  ],
   "keywords": [
     "llm",
     "context",

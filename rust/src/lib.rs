@@ -4486,7 +4486,7 @@ pub mod wasm {
     /// Get available lens names (WASM)
     #[wasm_bindgen]
     pub fn wasm_get_lenses() -> String {
-        let lenses = vec!["architecture", "debug", "security", "minimal", "onboarding"];
+        let lenses = vec!["architecture", "debug", "security", "onboarding"];
         serde_json::to_string(&lenses).unwrap_or_else(|_| "[]".to_string())
     }
 }

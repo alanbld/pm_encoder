@@ -1,0 +1,34 @@
+{
+  "name": "@voyager-observatory/wasm",
+  "version": "2.0.0",
+  "description": "Voyager Observatory WASM Bridge - AI Context Serialization in the Browser",
+  "main": "index.js",
+  "types": "pkg/pm_encoder.d.ts",
+  "keywords": [
+    "voyager",
+    "observatory",
+    "llm",
+    "context",
+    "serialization",
+    "ai",
+    "wasm",
+    "vscode",
+    "copilot"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/alanbld/voyager-observatory"
+  },
+  "license": "MIT",
+  "files": [
+    "index.js",
+    "pkg/"
+  ],
+  "scripts": {
+    "test": "node planetarium_demo.js",
+    "build": "cd ../../rust && wasm-pack build --target nodejs --features wasm && mv pkg ../bridges/wasm/"
+  },
+  "engines": {
+    "node": ">=16.0.0"
+  }
+}

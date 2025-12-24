@@ -584,3 +584,99 @@ fn test_sort_by_name_desc() {
     assert!(main_pos < lib_pos);
     assert!(lib_pos < config_pos);
 }
+
+// ============================================================================
+// Voyager Observatory Binary Tests (Day 8: The Vacuum Test)
+// ============================================================================
+
+#[test]
+fn test_vo_binary_exists_and_runs() {
+    // Test that the `vo` binary can be called directly
+    let mut cmd = Command::cargo_bin("vo").unwrap();
+    cmd.arg("--version");
+
+    cmd.assert()
+        .success()
+        .stdout(predicate::str::contains("1.0.0"));
+}
+
+#[test]
+fn test_vo_binary_produces_valid_output() {
+    let temp_dir = create_test_project();
+
+    let mut cmd = Command::cargo_bin("vo").unwrap();
+    cmd.arg(temp_dir.path());
+
+    cmd.assert()
+        .success()
+        .stdout(predicate::str::contains("++++++++++"))
+        .stdout(predicate::str::contains("----------"));
+}
+
+#[test]
+fn test_pm_encoder_alias_shows_voyager_hint() {
+    // The `pm_encoder` binary should show a hint about Voyager Observatory
+    let temp_dir = create_test_project();
+
+    let mut cmd = Command::cargo_bin("pm_encoder").unwrap();
+    cmd.arg(temp_dir.path());
+
+    cmd.assert()
+        .success()
+        // Should produce valid output
+        .stdout(predicate::str::contains("++++++++++"))
+        // Should show the Voyager hint on stderr
+        .stderr(predicate::str::contains("vo").or(predicate::str::contains("Voyager")));
+}
+
+#[test]
+fn test_pm_encoder_hint_can_be_suppressed() {
+    // Setting PM_ENCODER_NO_HINT=1 should suppress the hint
+    let temp_dir = create_test_project();
+
+    let mut cmd = Command::cargo_bin("pm_encoder").unwrap();
+    cmd.arg(temp_dir.path())
+        .env("PM_ENCODER_NO_HINT", "1");
+
+    let output = cmd.output().unwrap();
+    let stderr = String::from_utf8_lossy(&output.stderr);
+
+    assert!(output.status.success());
+    // With the hint suppressed, stderr should not contain the Voyager hint
+    assert!(
+        !stderr.contains("Voyager Observatory") || stderr.is_empty() || !stderr.contains("Tip:"),
+        "Hint should be suppressed when PM_ENCODER_NO_HINT is set"
+    );
+}
+
+#[test]
+fn test_vo_and_pm_encoder_produce_same_output() {
+    // Both binaries should produce identical context output
+    let temp_dir = create_test_project();
+
+    // Run vo
+    let mut vo_cmd = Command::cargo_bin("vo").unwrap();
+    let vo_output = vo_cmd
+        .arg(temp_dir.path())
+        .arg("--frozen")
+        .output()
+        .unwrap();
+
+    // Run pm_encoder with hint suppressed
+    let mut pm_cmd = Command::cargo_bin("pm_encoder").unwrap();
+    let pm_output = pm_cmd
+        .arg(temp_dir.path())
+        .arg("--frozen")
+        .env("PM_ENCODER_NO_HINT", "1")
+        .output()
+        .unwrap();
+
+    assert!(vo_output.status.success());
+    assert!(pm_output.status.success());
+
+    // stdout should be identical (the context output)
+    let vo_stdout = String::from_utf8_lossy(&vo_output.stdout);
+    let pm_stdout = String::from_utf8_lossy(&pm_output.stdout);
+
+    assert_eq!(vo_stdout, pm_stdout, "vo and pm_encoder should produce identical output");
+}
