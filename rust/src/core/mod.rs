@@ -1,4 +1,4 @@
-//! Core module for pm_encoder Context Kernel
+//! Core module for Voyager Observatory Context Kernel
 //!
 //! This module provides the foundational types and traits for the context serialization engine.
 //! It follows a modular architecture for testability and extensibility.
@@ -13,6 +13,9 @@
 //! - `engine`: Main ContextEngine orchestration
 //! - `zoom`: Fractal Protocol zoom actions
 //! - `fractal`: Fractal Context Engine for hierarchical, zoomable context
+//! - `syntax`: Tree-sitter based AST parsing (Phase 1A)
+//! - `plugin`: Plugin ecosystem reservation (Phase 2)
+//! - `ast_bridge`: Bridge to voyager-ast structural optics
 
 pub mod models;
 pub mod error;
@@ -28,6 +31,9 @@ pub mod fractal;
 pub mod orchestrator;
 pub mod presenter;
 pub mod celestial;
+pub mod syntax;
+pub mod plugin;
+pub mod ast_bridge;
 
 // Re-export commonly used types
 pub use models::{FileEntry, EncoderConfig, ProcessedFile, OutputFormat, Config, SkeletonMode, CompressionLevel};
@@ -75,4 +81,17 @@ pub use celestial::{
     NebulaNamer, NebulaName, NamingStrategy,
     ConstellationMapper, Nebula, CelestialMap, Star, FileInfo,
     NavigationCompass, NavigationSuggestion, ExplorationHint, SuggestionAction,
+};
+
+// Phase 1A: Core Syntax Infrastructure (Tree-sitter)
+pub use syntax::{
+    SyntaxRegistry, SyntaxProvider, TreeSitterAdapter,
+    NormalizedAst, Symbol, SymbolKind, SymbolVisibility,
+    Import, ImportKind, Location, Span, Language as SyntaxLanguage,
+    SyntaxError, ProviderStats,
+};
+
+// voyager-ast integration (Structural Optics)
+pub use ast_bridge::{
+    AstBridge, Star as AstStar, StarKind, FileSummary, StarSummary,
 };

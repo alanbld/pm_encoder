@@ -1,0 +1,49 @@
+[package]
+name = "voyager-ast"
+version = "0.1.0"
+edition = "2021"
+description = "Language-agnostic structural indexer for Voyager Observatory"
+license = "MIT"
+repository = "https://github.com/alanbld/voyager-observatory"
+keywords = ["ast", "tree-sitter", "parser", "indexer", "wasm"]
+categories = ["development-tools", "parsing", "wasm"]
+
+[lib]
+name = "voyager_ast"
+path = "src/lib.rs"
+crate-type = ["rlib"]
+
+[features]
+default = []
+wasm = []
+
+[dependencies]
+# Core
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+thiserror = "1.0"
+
+# Tree-sitter core
+tree-sitter = "0.24"
+
+# Language grammars (Core Fleet + high priority)
+tree-sitter-rust = "0.23"
+tree-sitter-python = "0.23"
+tree-sitter-typescript = "0.23"
+tree-sitter-javascript = "0.23"
+tree-sitter-c = "0.23"
+tree-sitter-cpp = "0.23"
+tree-sitter-java = "0.23"
+tree-sitter-go = "0.23"
+tree-sitter-ruby = "0.23"
+tree-sitter-c-sharp = "0.23"
+tree-sitter-html = "0.23"
+tree-sitter-css = "0.23"
+tree-sitter-json = "0.24"
+tree-sitter-bash = "0.23"
+
+[dev-dependencies]
+tempfile = "3.10"
+
+[lints.rust]
+unexpected_cfgs = { level = "warn", check-cfg = ['cfg(tarpaulin)'] }

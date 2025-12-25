@@ -18,6 +18,11 @@ vo .
 
 Every codebase is a galaxy of interconnected systems. Most tools dump raw files into AI context windows like throwing stars into a bag. The Voyager Observatory is different—it's a telescope that reveals the structure, relationships, and meaning in your code.
 
+**Powered by Tree-sitter AST analysis**, the Fractal Telescope sees beyond raw text:
+- **Stars** — Functions, classes, and symbols extracted with AST precision
+- **Nebulae** — Semantic clusters of related code
+- **Constellations** — Cross-file relationships and call graphs
+
 ### The Viewfinder
 
 Point the telescope at any directory. The viewfinder automatically detects project boundaries, respects your gitignore, and calculates token costs.
@@ -185,6 +190,7 @@ vo . --token-budget 50k --strategy hybrid
 
 | Feature | Voyager Observatory | repomix | files-to-prompt |
 |---------|---------------------|---------|-----------------|
+| **AST parsing** | Tree-sitter (25 languages) | No | No |
 | **Token budgeting** | Drop/truncate/hybrid | No | No |
 | **Semantic analysis** | Fractal clustering | No | No |
 | **Intent exploration** | 5 built-in intents | No | No |

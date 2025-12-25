@@ -1,12 +1,16 @@
+[workspace]
+members = [".", "voyager-ast"]
+resolver = "2"
+
 [package]
-name = "pm_encoder"
-version = "1.0.0"
+name = "voyager-observatory"
+version = "2.0.0"
 edition = "2021"
-description = "High-performance context serializer (Rust Engine)"
+description = "Voyager Observatory: The Fractal Telescope for Code"
 license = "MIT"
-repository = "https://github.com/alanbld/pm_encoder"
-keywords = ["llm", "context", "serialization", "ai", "wasm"]
-categories = ["command-line-utilities", "wasm"]
+repository = "https://github.com/alanbld/voyager-observatory"
+keywords = ["llm", "context", "serialization", "ai", "wasm", "tree-sitter", "ast"]
+categories = ["command-line-utilities", "wasm", "development-tools"]
 
 [lib]
 name = "pm_encoder"
@@ -49,6 +53,29 @@ clap = { version = "4.4", features = ["derive"] }
 walkdir = "2.4"
 ignore = "0.4"
 petgraph = "0.6"
+
+# Voyager AST - structural optics layer
+voyager-ast = { path = "voyager-ast" }
+
+# Tree-sitter core and well-maintained language grammars
+tree-sitter = "0.24"
+tree-sitter-rust = "0.23"
+tree-sitter-python = "0.23"
+tree-sitter-javascript = "0.23"
+tree-sitter-typescript = "0.23"
+tree-sitter-go = "0.23"
+tree-sitter-java = "0.23"
+tree-sitter-c = "0.23"
+tree-sitter-cpp = "0.23"
+tree-sitter-c-sharp = "0.23"
+tree-sitter-ruby = "0.23"
+tree-sitter-html = "0.23"
+tree-sitter-css = "0.23"
+tree-sitter-json = "0.24"
+tree-sitter-bash = "0.23"
+# Note: Additional grammars (PHP, Swift, Kotlin, Scala, YAML, Lua, SQL, HCL, Dockerfile,
+# TOML, Markdown) will be added as optional features in a future release when
+# compatible tree-sitter versions are available
 
 # WASM dependencies (optional)
 wasm-bindgen = { version = "0.2", optional = true }
