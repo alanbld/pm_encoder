@@ -34,6 +34,7 @@ pub mod presenter;
 pub mod celestial;
 pub mod syntax;
 pub mod plugin;
+pub mod plugins;
 pub mod ast_bridge;
 pub mod metrics;
 pub mod regex_engine;
@@ -123,4 +124,18 @@ pub use temporal::{
     TectonicShift, AncientStar, Supernova, AgeClassification, ChurnClassification,
     is_temporal_available, temporal_state_description,
     GeologicalAnalyzer, GeologicalSummary, GeologicalActivity,
+};
+
+// Phase 3: Plugin Ecosystem (Iron Sandbox)
+pub use plugins::{
+    PluginEngine, EngineState, PluginLoader, PluginManifest, PluginEntry,
+    LoadedPlugin, PluginStatus, PluginError, PluginResult,
+    is_plugins_available, plugins_feature_description,
+    MEMORY_LIMIT, TIMEOUT_MS, CURRENT_API_VERSION,
+};
+
+#[cfg(feature = "plugins")]
+pub use plugins::{
+    IronSandbox, create_vo_table, create_vo_table_simple,
+    PluginContributions, SharedContributions, MetricValue, LogEntry,
 };

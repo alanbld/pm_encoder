@@ -602,6 +602,68 @@ impl IntelligentPresenter {
         )
     }
 
+    // =========================================================================
+    // Phase 3: Plugin Ecosystem Summary
+    // =========================================================================
+
+    /// Generate a plugin summary for the Mission Log.
+    ///
+    /// Shows loaded plugins with sandbox status.
+    ///
+    /// # Arguments
+    /// * `plugin_count` - Number of loaded plugins
+    /// * `loaded_plugins` - Names of loaded plugins
+    /// * `sandbox_active` - Whether the Iron Sandbox is active
+    pub fn format_plugin_summary(
+        &self,
+        plugin_count: usize,
+        loaded_plugins: &[String],
+        sandbox_active: bool,
+    ) -> String {
+        use std::fmt::Write;
+        let mut output = String::new();
+
+        if plugin_count == 0 {
+            return String::from("🔌 No external optics detected.\n");
+        }
+
+        writeln!(output, "🔌 External Optics: {} community plugin{} loaded",
+            plugin_count,
+            if plugin_count == 1 { "" } else { "s" }
+        ).ok();
+
+        // Show plugin names (up to 5)
+        let show_count = loaded_plugins.len().min(5);
+        for (i, name) in loaded_plugins.iter().take(show_count).enumerate() {
+            let prefix = if i == show_count - 1 && loaded_plugins.len() <= 5 {
+                "└─"
+            } else {
+                "├─"
+            };
+            writeln!(output, "   {} {}", prefix, name).ok();
+        }
+
+        if loaded_plugins.len() > 5 {
+            writeln!(output, "   └─ ... and {} more", loaded_plugins.len() - 5).ok();
+        }
+
+        // Sandbox status
+        if sandbox_active {
+            writeln!(output, "🛡️ Plugin sandbox: Active (10MB memory, 100ms timeout)").ok();
+        } else {
+            writeln!(output, "⚠️ Plugin sandbox: Inactive").ok();
+        }
+
+        output
+    }
+
+    /// Format plugin summary from a PluginEngine (convenience method).
+    pub fn format_plugin_summary_from_engine(&self, engine: &crate::core::plugins::PluginEngine) -> String {
+        let names: Vec<String> = engine.plugin_names().iter().map(|s| s.to_string()).collect();
+        let sandbox_active = crate::core::plugins::is_plugins_available();
+        self.format_plugin_summary(engine.plugin_count(), &names, sandbox_active)
+    }
+
     /// Detect the two hemispheres (top 2 languages) from a language distribution.
     pub fn detect_hemispheres(languages: &[(String, usize)]) -> (String, Option<String>) {
         let mut sorted: Vec<_> = languages.to_vec();
